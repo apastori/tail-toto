@@ -1,0 +1,86 @@
+# Compiled object files
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled Static libraries
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Legacy root-level / in-tree binaries (pre-build/ layout)
+/tail-toto
+/tail-toto-debug
+/tests/test_core
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Build artefacts under build/ — keep directory markers tracked
+/build/*
+!/build/.gitkeep
+!/build/tests/
+/build/tests/*
+!/build/tests/.gitkeep
+
+/bin/
+/obj/
+/out/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Autotools
+aclocal.m4
+autom4te.cache/
+configure
+config.log
+config.status
+libtool
+Makefile.in
+m4/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Coverage / profiling
+*.gcda
+*.gcno
+*.gcov
+gmon.out
+
+# Dependency files (optional, remove if you track them)
+*.d
