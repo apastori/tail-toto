@@ -1,0 +1,51 @@
+# Auto-detect text files and normalize line endings to LF in repo
+* text=auto eol=lf
+
+# Explicitly mark source files as text
+*.c     text
+*.h     text
+*.md    text
+*.txt   text
+*.json  text
+*.yml   text
+*.yaml  text
+
+# Shell scripts
+*.sh    text eol=lf
+
+# Windows scripts (if any)
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Makefiles (force LF)
+Makefile text eol=lf
+
+# Binary files (no diff, no merge, no EOL normalization)
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.pdf   binary
+*.zip   binary
+*.tar   binary
+*.gz    binary
+*.a     binary
+*.so    binary
+*.dll   binary
+*.exe   binary
+*.out   binary
+
+# Object files
+*.o     binary
+*.obj   binary
+
+# Archives
+*.7z    binary
+*.rar   binary
+
+# Optional: mark generated files (no diff noise)
+# Uncomment if you generate these
+# *.log  linguist-generated=true
+# *.map  linguist-generated=true
+# compile_commands.json linguist-generated=true
+
