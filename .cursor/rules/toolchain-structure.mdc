@@ -1,0 +1,177 @@
+---
+description: C toolchain, build system, and directory structure for tail-toto
+globs: ["Makefile", "*.c", "*.h", "src/**/*.c", "include/**/*.h", "tests/**/*.c"]
+alwaysApply: false
+---
+
+# Toolchain & Project Structure
+
+## Language
+
+**C11** (`-std=c11`). **No C++.**
+
+## Compiler flags (from `Makefile`)
+
+```
+-std=c11 -Wall -Wextra -Wpedantic -Werror
+-D_POSIX_C_SOURCE=200809L
+-D_FILE_OFFSET_BITS=64
+-Iinclude
+-O2          # release (CFLAGS)
+```
+
+When the `<io.h>` / `_setmode` probe succeeds, the Makefile also adds:
+
+```
+-DTAIL_TOTO_WIN32_IO   # O_BINARY on open(), _setmode() on stdin/stdout
+```
+
+No extra libraries are linked on either platform.
+
+Debug target uses `CFLAGS_DEBUG`: `-g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer`.
+
+## Artefact layout
+
+All build outputs live under **`build/`**; never write binaries at the repo root
+or into `tests/`.
+
+| Artefact | Path |
+|----------|------|
+| Release binary | `build/tail-toto` (`.exe` on Windows) |
+| Debug binary | `build/tail-toto-debug` |
+| Main objects | `build/*.o` (from `src/*.c`) |
+| Test binary | `build/tests/test_core` |
+| Test objects | `build/tests/*.o` (from `tests/*.c`) |
+
+`build/.gitkeep` and `build/tests/.gitkeep` keep the directories in git when empty.
+`make clean` removes objects and binaries but leaves the `.gitkeep` files.
+
+## Compiler selection
+
+`Makefile` picks **gcc** if available, else **clang**:
+
+```makefile
+CC := $(shell command -v gcc >/dev/null 2>&1 && echo gcc || echo clang)
+```
+
+On **`OS=Windows_NT`**, if `C:/msys64/ucrt64/bin/gcc` exists, it becomes `CC`
+(so Git Bash does not use a minimal or mismatched MinGW toolchain).
+
+## Platform probe (`<io.h>`)
+
+Before compiling, the Makefile compiles a tiny program that includes `<io.h>`
+and `<fcntl.h>` and calls `_setmode(0, _O_BINARY)`:
+
+- **Probe fails** → POSIX I/O only; full unit tests.
+- **Probe succeeds** → `-DTAIL_TOTO_WIN32_IO`; stdin/stdout switched to binary
+  mode and files opened with `O_BINARY` so CRLF bytes are never translated;
+  pipe tests `SKIP`.
+
+Typical outcomes:
+
+| Environment | Probe | I/O mode |
+|-------------|-------|----------|
+| Linux / WSL | fail | POSIX |
+| MSYS2 UCRT64 gcc | success | Win32 binary mode |
+| Git Bash + UCRT64 gcc | success | Win32 binary mode |
+| Cygwin / MSYS (POSIX runtime) | fail* | POSIX |
+
+\*If a Cygwin-like runtime does pass the probe, forcing binary mode is harmless.
+
+## Build system
+
+**GNU Make** at repo root. Object files are compiled into `build/` and
+`build/tests/`, then linked.
+
+| Target | Output |
+|--------|--------|
+| `make` / `all` | `build/tail-toto` |
+| `make debug` | `build/tail-toto-debug` |
+| `make test` | builds + runs `build/tests/test_core` |
+| `make clean` | removes objects/binaries under `build/` (keeps `.gitkeep`) |
+| `make install` | `install -m 755 build/tail-toto /usr/local/bin` (Linux/macOS) |
+
+**Main sources:** `src/main.c`, `src/tail_toto_emit.c`, `src/tail_toto_cli.c`, `src/tail_toto_io.c`, `src/tail_toto_tail.c`, `src/tail_toto_run.c`
+
+**Test sources:** `tests/test_runner.c`, `tests/test_util.c`, `tests/test_count_parse.c`, `tests/test_lines_last.c`, `tests/test_lines_from.c`, `tests/test_bytes_last.c`, `tests/test_stream.c`
+
+## Dependencies
+
+- **POSIX builds:** libc only (`unistd.h`, `fcntl.h`, `sys/stat.h`, `inttypes.h`, etc.).
+- **Win32 I/O builds:** libc only (UCRT `io.h` / `fcntl.h` for `_setmode`, `O_BINARY`).
+
+## Directory layout
+
+```
+tail-toto/
+├── LICENSE.txt          — GNU GPL v2 (full text)
+├── c_version.txt        — C11 / compiler / toolchain documentation
+├── .cursor/rules/
+├── Makefile
+├── README.md
+├── build/
+│   ├── .gitkeep
+│   └── tests/
+│       └── .gitkeep
+├── include/
+│   ├── tail_toto.h
+│   ├── tail_toto_emit.h
+│   ├── tail_toto_cli.h
+│   ├── tail_toto_io.h
+│   └── tail_toto_tail.h
+├── src/
+│   ├── main.c
+│   ├── tail_toto_emit.c
+│   ├── tail_toto_cli.c
+│   ├── tail_toto_io.c
+│   ├── tail_toto_tail.c
+│   └── tail_toto_run.c
+└── tests/
+    ├── test_runner.c
+    ├── test_util.c / .h
+    ├── test_count_parse.c / .h
+    ├── test_lines_last.c / .h
+    ├── test_lines_from.c / .h
+    ├── test_bytes_last.c / .h
+    └── test_stream.c / .h
+```
+
+Build artefacts under `build/` (except `.gitkeep` files) are gitignored.
+
+## Building on Linux / WSL
+
+```sh
+make clean && make && make test
+./build/tail-toto /etc/passwd
+```
+
+## Building on Windows
+
+**Recommended:** MSYS2 **UCRT64** or **Git Bash** with UCRT64 `gcc` on `PATH`:
+
+```sh
+pacman -S make mingw-w64-ucrt-x86_64-gcc   # once
+cd /path/to/tail-toto
+make clean && make && make test
+./build/tail-toto README.md
+```
+
+Produces a **native Windows executable** (`build/tail-toto` or
+`build/tail-toto.exe`). Runs in UCRT64, Git Bash, cmd, and PowerShell.
+
+### Git Bash caveat
+
+Put **`/c/msys64/ucrt64/bin` early on `PATH`** (before Git's embedded
+MinGW). Otherwise `make` may pick a compiler with a different runtime (wrong
+probe result, text-mode CRLF translation) or fail opaquely. Prefer:
+
+```bash
+PATH="/c/msys64/ucrt64/bin:$PATH" make
+```
+
+## Linking notes
+
+- `main()` lives only in `src/main.c`.
+- Tests link every `src/*.c` object **except `src/main.c`**; `test_runner.c`
+  provides the test `main()`.
+- Debug binary is compiled from sources with `CFLAGS_DEBUG` (not reused release `.o` files).

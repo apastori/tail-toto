@@ -1,0 +1,210 @@
+---
+description: Canonical C11 implementation for tail-toto — module layout, argument parsing, tail algorithms, write, and exit behaviour
+globs: ["src/**/*.c", "include/**/*.h"]
+alwaysApply: false
+---
+
+# tail-toto — Implementation (C11)
+
+## Module layout
+
+| Path | Role |
+|------|------|
+| `include/tail_toto.h` | `TAIL_TOTO_VERSION_STRING`, `TAIL_TOTO_EXIT_*` enum, `enum tail_toto_mode`, `struct tail_toto_opts`, `tail_toto_run()` declaration |
+| `include/tail_toto_emit.h` | `tail_toto_emit_error()`, `tail_toto_emit_open_error()`, `tail_toto_emit_read_error()`, `tail_toto_emit_write_error()`, `tail_toto_emit_invalid_count()`, `tail_toto_emit_bad_option()`, `tail_toto_emit_missing_arg()` |
+| `include/tail_toto_cli.h` | `TAIL_TOTO_ARG_*` flag macros, `scan_meta_flags()`, `tail_toto_parse_args()`, `tail_toto_parse_count()`, `print_help()`, `print_version()` |
+| `include/tail_toto_io.h` | `TAIL_TOTO_BUFSIZE`, `TAIL_TOTO_O_BINARY`, `tail_toto_write_all()`, `tail_toto_read_retry()`, `tail_toto_set_binary_stdio()` |
+| `include/tail_toto_tail.h` | `enum tail_toto_status`, `tail_toto_tail_fd()` |
+| `src/main.c` | `main()` only — meta flags, parse args, call `tail_toto_run()` |
+| `src/tail_toto_emit.c` | stderr diagnostics |
+| `src/tail_toto_cli.c` | `argv_has_exact()`, meta-flag scan, option/count parsing, help/version text |
+| `src/tail_toto_io.c` | `write()` / `read()` retry wrappers, Win32 binary-mode setup |
+| `src/tail_toto_tail.c` | `tail_toto_tail_fd()` — seekable and stream algorithms for lines/bytes, last-N and `+N` |
+| `src/tail_toto_run.c` | `tail_toto_run()` — iterate operands, open/close, headers, aggregate exit status |
+
+Each `.c` file opens with a **chain-of-thought comment block** (responsibility,
+syscalls, heap usage, C standard). Preserve that pattern when adding files.
+
+## C standard
+
+**ISO C11** (`-std=c11`), `-D_POSIX_C_SOURCE=200809L` for POSIX.1-2008 where
+available (`open`, `read`, `write`, `lseek`, `fstat`, `close`, etc.), and
+`-D_FILE_OFFSET_BITS=64` for large-file `off_t`.
+
+Platform selection is via Makefile define **`TAIL_TOTO_WIN32_IO`**
+(set when a compile probe for `<io.h>` + `_setmode(0, _O_BINARY)` succeeds).
+
+## Options (`struct tail_toto_opts`)
+
+```c
+enum tail_toto_mode {
+    TAIL_TOTO_MODE_LINES_LAST,   /* -n N   (default, N = 10) */
+    TAIL_TOTO_MODE_LINES_FROM,   /* -n +N */
+    TAIL_TOTO_MODE_BYTES_LAST,   /* -c N   */
+    TAIL_TOTO_MODE_BYTES_FROM    /* -c +N  */
+};
+
+struct tail_toto_opts {
+    enum tail_toto_mode mode;
+    uintmax_t count;
+    int headers;                 /* -1 auto, 0 = -q, 1 = -v */
+    int nfiles;
+    char **files;                /* points into argv; never copied */
+};
+```
+
+## Argument handling (`src/main.c`, `src/tail_toto_cli.c`)
+
+Flag macros in `tail_toto_cli.h`:
+
+- `TAIL_TOTO_ARG_HELP` / `TAIL_TOTO_ARG_HELP_SHORT` → `--help` / `--h`
+- `TAIL_TOTO_ARG_VERSION` / `TAIL_TOTO_ARG_VERSION_SHORT` → `--version` / `--v`
+- `TAIL_TOTO_ARG_LINES` / `TAIL_TOTO_ARG_LINES_SHORT` → `--lines` / `-n`
+- `TAIL_TOTO_ARG_BYTES` / `TAIL_TOTO_ARG_BYTES_SHORT` → `--bytes` / `-c`
+- `TAIL_TOTO_ARG_QUIET` / `TAIL_TOTO_ARG_SILENT` / `TAIL_TOTO_ARG_QUIET_SHORT` → `--quiet` / `--silent` / `-q`
+- `TAIL_TOTO_ARG_VERBOSE` / `TAIL_TOTO_ARG_VERBOSE_SHORT` → `--verbose` / `-v`
+- `TAIL_TOTO_ARG_END` → `--`
+
+`scan_meta_flags()` uses static **`argv_has_exact()`** (no hardcoded strings in the scan logic).
+
+1. Scan `argv[1…]` up to the first `--` for help flags → help + exit 0 (**wins** over version).
+2. Else scan for version flags → `tail-toto <version>\n` + exit 0.
+3. Else `tail_toto_parse_args()` fills `struct tail_toto_opts`:
+   - `-n NUM`, `-nNUM`, `--lines=NUM`, `--lines NUM` (same for `-c` / `--bytes`)
+   - Short boolean flags may be bundled (`-qv`); `n` / `c` inside a bundle
+     consume the rest of the token, or the next argument if the token ends
+   - Last `-n` / `-c` wins; last `-q` / `-v` wins
+   - `--` ends options; a lone `-` is an operand (stdin)
+   - Remaining arguments are file operands, kept in order
+   - On error: emit diagnostic + hint, return failure → `main()` exits 1
+4. If no operands → treat as a single `-` operand.
+5. Call `tail_toto_run(&opts)` and return its exit code.
+
+`tail_toto_parse_count(const char *s, uintmax_t *out, int *from_start)`:
+
+- Optional leading `+` sets `from_start`; optional leading `-` is accepted and
+  ignored (GNU compatible); then one or more decimal digits, nothing else
+- Uses `strtoumax()` with `errno` check; overflow saturates to `UINTMAX_MAX`
+- Returns `0` on success, `-1` on invalid input (no diagnostics inside)
+
+Error message formats (all **stderr**):
+
+```
+tail-toto: invalid option -- 'x'
+Try 'tail-toto --help' for more information.
+
+tail-toto: unrecognized option '--foo'
+Try 'tail-toto --help' for more information.
+
+tail-toto: option requires an argument -- 'n'
+Try 'tail-toto --help' for more information.
+
+tail-toto: invalid number of lines: 'abc'
+tail-toto: invalid number of bytes: 'abc'
+```
+
+## Running (`tail_toto_run`)
+
+```
+tail_toto_set_binary_stdio()                       // no-op on POSIX
+show = headers == 1 || (headers == -1 && nfiles > 1)
+status = TAIL_TOTO_EXIT_OK
+for each operand i:
+    name = "-" ? "standard input" : operand
+    fd   = "-" ? STDIN_FILENO : open(operand, O_RDONLY | TAIL_TOTO_O_BINARY)
+    if fd < 0 → emit_open_error(name), status = ERR, continue
+    if show → write "==> name <==\n" (prefixed by "\n" unless first header)
+    r = tail_toto_tail_fd(fd, STDOUT_FILENO, &opts)
+    r == READ_ERR  → emit_read_error(name), status = ERR
+    r == WRITE_ERR → emit_write_error(), exit(ERR)
+    close(fd) unless stdin
+return status
+```
+
+A header is only written once the file opens successfully (GNU behaviour).
+
+## Tail algorithms (`tail_toto_tail_fd`)
+
+Returns `TAIL_TOTO_OK`, `TAIL_TOTO_READ_ERR`, or `TAIL_TOTO_WRITE_ERR` with
+`errno` preserved. Never exits, never prints diagnostics.
+
+Dispatch: `fstat()` → if `S_ISREG` and `lseek(fd, 0, SEEK_CUR)` succeeds →
+seekable path; else stream path.
+
+### Seekable, last N lines
+
+```
+end = lseek(fd, 0, SEEK_END)
+if count == 0 → return OK
+read chunks of TAIL_TOTO_BUFSIZE backwards from end
+ignore a trailing '\n' at end-1 (it terminates the last line, not a new one)
+count '\n' scanning backwards; start = offset just after the Nth '\n'
+if file start reached first → start = initial offset
+lseek(fd, start, SEEK_SET); stream to out_fd
+```
+
+### Seekable, last N bytes
+
+`start = max(initial offset, end - N)`; `lseek` + stream.
+
+### Stream, last N lines
+
+Read fixed-size chunks into a list; track newline count per chunk; evict the
+oldest chunk while the remaining chunks still contain more than N lines. At EOF,
+skip leading surplus lines in the oldest chunk and write the rest.
+
+### Stream, last N bytes
+
+Ring buffer holding at most N bytes; at EOF write it out in at most two
+`write` calls (wrap-around).
+
+### `+N` modes (seekable or stream)
+
+Skip forward: lines → consume until `N - 1` newlines seen (`+0` ≡ `+1`);
+bytes → skip `N - 1` bytes (`lseek` when seekable). Then stream the rest.
+
+## Output
+
+- File data and headers are emitted via **`tail_toto_write_all()`** (raw
+  `write()`) — no `printf` / `puts` on this path.
+- Bytes are written exactly as read; no newline is appended to a final
+  unterminated line.
+- `--help` and `--version` text may use `printf` / `fputs` to stdout.
+
+## Exit codes
+
+| Code | Constant | Meaning |
+|------|----------|---------|
+| `0` | `TAIL_TOTO_EXIT_OK` | All inputs processed; or `--help` / `--version` |
+| `1` | `TAIL_TOTO_EXIT_ERR` | Usage error, any open/read failure, write failure |
+
+## Error messages
+
+All diagnostics on **stderr**:
+
+- System error: `tail-toto: <context>: <strerror(errno)>`
+- Open failure: `tail-toto: cannot open '<name>' for reading: <strerror(errno)>`
+- Read failure: `tail-toto: error reading '<name>': <strerror(errno)>`
+- Write failure: `tail-toto: write error: <strerror(errno)>`
+- Invalid count: `tail-toto: invalid number of lines|bytes: '<arg>'`
+- Option errors: see formats above, each followed by the hint line
+
+Never print errors to stdout.
+
+## `tail_toto_write_all()` contract
+
+In `tail_toto_io.c`:
+
+- **Precondition:** `buf != NULL` or `len == 0`
+- **Postcondition:** returns `0` with all `len` bytes written, or `-1` with
+  `errno` set
+- On `EINTR`: retry immediately
+- On short write: continue from the remaining offset
+- Never exits; callers map `-1` to `TAIL_TOTO_WRITE_ERR`
+
+`tail_toto_read_retry()` mirrors this: retries `EINTR`, returns bytes read,
+`0` on EOF, `-1` on error.
+
+## Naming
+
+Public run entry point: **`tail_toto_run()`** (not bare `run`).

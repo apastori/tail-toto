@@ -1,0 +1,109 @@
+---
+description: Unit test layout and conventions for tail-toto
+globs: ["tests/**/*.c", "tests/**/*.h", "Makefile"]
+alwaysApply: false
+---
+
+# Testing — tail-toto
+
+## Scope
+
+The Makefile `test` target builds and runs **`build/tests/test_core`** (or
+`build/tests/test_core.exe` on Windows).
+
+Tests cover **count parsing** (`tail_toto_parse_count()`) and the **tail
+algorithms** (`tail_toto_tail_fd()`) on both the seekable path (temporary
+regular files) and the stream path (pipes). They do **not** exercise
+`tail_toto_run()`, headers across multiple operands, or the process exit code.
+There are **no** subprocess / integration tests in-tree.
+
+When the build defines **`TAIL_TOTO_WIN32_IO`**, pipe-based (stream path)
+tests print **`SKIP: <name>`** and return — `make test` still exits 0. Seekable
+and parsing tests run on every platform.
+
+## Layout
+
+| File | Role |
+|------|------|
+| `tests/test_runner.c` | `main()` — invokes all suites in fixed order |
+| `tests/test_util.c` / `.h` | helpers: temp file from string, run `tail_toto_tail_fd()` into a temp file, compare output |
+| `tests/test_count_parse.c` / `.h` | `10`, `+5`, `0`, overflow saturation; rejects `""`, `abc`, `5x`, `+` |
+| `tests/test_lines_last.c` / `.h` | seekable `-n N`: default 10, N > lines, `N = 0`, no trailing newline, empty file, chunk-boundary file |
+| `tests/test_lines_from.c` / `.h` | seekable `-n +N`: `+1`, `+0`, `+N` beyond EOF |
+| `tests/test_bytes_last.c` / `.h` | seekable `-c N` and `-c +N` |
+| `tests/test_stream.c` / `.h` | pipe input for `-n N` and `-c N` (`SKIP` on Win32) |
+
+Order in `test_runner.c`: count_parse → lines_last → lines_from → bytes_last → stream.
+
+One scenario per `.c` / `.h` pair; headers declare `void test_<name>_run(void)`.
+`test_util` is a helper, not a scenario.
+
+Test objects and the linked binary live under **`build/tests/`** (not under
+`tests/`).
+
+## Framework
+
+- No external framework — plain C with `<assert.h>`.
+- Each case prints `PASS: <descriptive name>` on success.
+- `assert()` failure → `abort()` → non-zero exit from `make test`.
+
+## Build (from `Makefile`)
+
+```makefile
+TEST_CORE := $(TEST_BUILD_DIR)/test_core   # build/tests/test_core
+LIB_OBJS  := $(filter-out $(BUILD_DIR)/main.o,$(OBJS))
+
+$(TEST_CORE): $(TEST_OBJS) $(LIB_OBJS) $(HDRS) $(TEST_HDRS) | $(TEST_BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $(TEST_OBJS) $(LIB_OBJS) $(LDFLAGS)
+
+test: $(TEST_CORE)
+	./$(TEST_CORE)
+```
+
+Tests link every `src/*.c` object **except `src/main.c`**. They receive the
+same release `CFLAGS` as the main binary (including `TAIL_TOTO_WIN32_IO` when
+applicable).
+
+## Required cases
+
+1. **Count parsing:** valid forms accepted with correct value and `+` flag;
+   invalid forms return `-1`; huge values saturate to `UINTMAX_MAX`.
+2. **Last N lines:** `"a\nb\nc\n"` with N = 2 → `"b\nc\n"`; N larger than the
+   line count → whole file; N = 0 → empty output.
+3. **Unterminated last line:** `"a\nb"` with N = 1 → `"b"` (no newline added).
+4. **Chunk boundary:** input larger than `TAIL_TOTO_BUFSIZE` where the target
+   newline straddles a chunk boundary.
+5. **`+N` lines / bytes:** `+1` and `+0` → whole file; `+N` past EOF → empty.
+6. **Last N bytes:** N less than, equal to, and greater than file size.
+7. **Stream path (POSIX only):** same expectations as 2 and 6 via `pipe()`.
+8. Never call `exit()` from a test; use `assert()` or `return` only.
+
+## Adding tests
+
+- Add `tests/test_<name>.c` + `.h`, declare runner in `.h`, call from
+  `test_runner.c`, append to `TEST_SRCS` in `Makefile`.
+- Wrap pipe-based code in `#ifndef TAIL_TOTO_WIN32_IO` with a `SKIP`
+  stub in the `#else` branch.
+- Use `tmpfile()` + `fileno()` for temporary files; close everything a test opens.
+- Keep test code allocation-free; stack buffers only (heap use inside the code
+  under test is fine).
+
+## Manual smoke tests (not automated)
+
+After `make`:
+
+```sh
+seq 1 20 > /tmp/t.txt
+./build/tail-toto /tmp/t.txt                # expect: 11..20, exit 0
+./build/tail-toto -n 3 /tmp/t.txt           # expect: 18..20, exit 0
+./build/tail-toto -n +18 /tmp/t.txt         # expect: 18..20, exit 0
+./build/tail-toto -c 3 /tmp/t.txt           # expect: "20\n" (last 3 bytes), exit 0
+seq 1 20 | ./build/tail-toto -n 2           # expect: 19, 20 (stream path), exit 0
+./build/tail-toto /tmp/t.txt /tmp/t.txt     # expect: two "==> ... <==" headers, exit 0
+./build/tail-toto -q /tmp/t.txt /tmp/t.txt  # expect: no headers, exit 0
+./build/tail-toto missing /tmp/t.txt        # expect: error on stderr, file printed, exit 1
+./build/tail-toto -n abc /tmp/t.txt         # expect: invalid number of lines, exit 1
+./build/tail-toto --version                 # expect: tail-toto <version>, exit 0
+./build/tail-toto --help                    # expect: usage text on stdout, exit 0
+diff <(tail -n 7 /tmp/t.txt) <(./build/tail-toto -n 7 /tmp/t.txt)   # POSIX: expect no diff
+```

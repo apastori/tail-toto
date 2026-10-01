@@ -1,0 +1,116 @@
+---
+description: C code style, formatting, naming, and quality rules for tail-toto
+globs: ["src/**/*.c", "include/**/*.h", "tests/**/*.c", "tests/**/*.h", "Makefile"]
+alwaysApply: false
+---
+
+# Code Style & Quality
+
+## Standard & flags
+
+- **C11** (`-std=c11`)
+- `-Wall -Wextra -Wpedantic -Werror`
+- `-D_POSIX_C_SOURCE=200809L`
+- `-D_FILE_OFFSET_BITS=64` (64-bit `off_t` for large files)
+- `-DTAIL_TOTO_WIN32_IO` when Makefile `<io.h>` / `_setmode` probe succeeds (Windows/Git Bash)
+- Zero warnings — all treated as errors
+
+## Formatting
+
+- **Indentation:** 4 spaces. No tabs.
+- **Function definitions:** opening brace on its own line.
+- **Line length:** prefer ≤80 characters where practical.
+- **Files end with a single newline.**
+
+## Module conventions
+
+- **`src/main.c`** stays thin — meta-flag scan, dispatch to help/version,
+  call `tail_toto_parse_args()`, call `tail_toto_run()`, and exit. No file I/O,
+  no tail logic, no formatting logic.
+- **`include/tail_toto.h`** — version string, exit code enum, `tail_toto_mode`
+  enum, `struct tail_toto_opts`, and `tail_toto_run()` declaration.
+- **`include/tail_toto_cli.h`** — CLI flag string macros (`TAIL_TOTO_ARG_*`),
+  argument and count parsing.
+- **One concern per `src/tail_toto_*.c`** — do not collapse back into a
+  monolith without reason.
+- **Tail algorithms** (`tail_toto_tail.c`) never call `exit()` and never print
+  diagnostics; they return a status code so tests can drive them.
+- **Platform I/O:** `#ifdef TAIL_TOTO_WIN32_IO` in `tail_toto_io.c` and test
+  sources only; do not use bare `#if defined(_WIN32)` alone (Cygwin/MSYS builds
+  should keep the POSIX path).
+
+## Naming
+
+| Kind | Style | Examples |
+|------|-------|----------|
+| Functions | `snake_case` | `tail_toto_run`, `tail_toto_tail_fd`, `argv_has_exact`, `print_help` |
+| Macros / constants | `UPPER_SNAKE_CASE` | `TAIL_TOTO_VERSION_STRING`, `TAIL_TOTO_ARG_LINES`, `TAIL_TOTO_BUFSIZE` |
+| Types | `snake_case` with prefix | `struct tail_toto_opts`, `enum tail_toto_mode` |
+| Headers | `TAIL_TOTO_*_H` guards | `TAIL_TOTO_H`, `TAIL_TOTO_CLI_H`, `TAIL_TOTO_TAIL_H` |
+
+Public API prefix: **`tail_toto_`** for module entry points.
+
+## Memory
+
+- **Seekable path:** stack buffer `char buf[TAIL_TOTO_BUFSIZE]` (8192); read
+  backwards with `lseek()` to locate the start offset, then stream forward to
+  stdout. No heap.
+- **Non-seekable path (lines):** linked list or ring of fixed-size chunks
+  holding only enough data to cover the last N lines; drop old chunks as new
+  ones arrive.
+- **Non-seekable path (bytes):** ring buffer of exactly N bytes, capped; for
+  huge N, grow incrementally rather than allocating N up front.
+- **`+NUM` modes:** no buffering — skip forward, then stream. No heap.
+- Every `malloc()` is checked; every allocation is freed before the function
+  returns, on both success and error paths.
+- No heap allocation for headers, diagnostics, or argument parsing.
+
+## Output rules (`tail_toto_io.c`, `tail_toto_tail.c`, `tail_toto_run.c`)
+
+- All file data and `==> name <==` headers go through
+  `tail_toto_write_all(STDOUT_FILENO, buf, len)` — raw `write()`.
+- No `printf` / `fprintf` / `puts` / `fputs` / `fwrite` for file data or headers.
+- Never mix stdio and raw `write()` on stdout outside `--help` / `--version`.
+- `exit()` on unrecoverable error is acceptable only in `tail_toto_run()` and
+  `src/main.c`.
+
+## Errors
+
+- **stderr only:** `tail-toto: <context>: <strerror(errno)>` for system errors.
+- **stderr only:** `tail-toto: cannot open '<name>' for reading: <reason>`.
+- **stderr only:** `tail-toto: error reading '<name>': <reason>`.
+- **stderr only:** `tail-toto: write error: <reason>`.
+- **stderr only:** `tail-toto: invalid number of lines|bytes: '<arg>'`.
+- **stderr only:** invalid / unrecognized option and missing-argument messages + hint line.
+- Count values are `uintmax_t`; overflow saturates to `UINTMAX_MAX` (GNU treats
+  huge counts as "everything").
+- Implemented in `tail_toto_emit.c`.
+
+## Comments
+
+- Chain-of-thought block at top of each `src/*.c` and test file.
+- Contract comments on non-trivial functions: preconditions, postconditions,
+  return value, error behaviour.
+- Comment non-obvious decisions (seekable vs stream selection, backwards scan
+  and trailing-newline handling, chunk eviction, `O_BINARY` / `_setmode`,
+  Makefile `<io.h>` probe); not obvious code.
+
+## Tests
+
+- Plain `assert()` — no external test framework.
+- One scenario per `tests/test_<area>_*.c`; runner in `tests/test_runner.c`.
+- Print `PASS: <name>` on success; `SKIP: <name>` for pipe-based cases when
+  `TAIL_TOTO_WIN32_IO`.
+
+## What not to do
+
+- Do not compile as C++.
+- Do not link extra libraries beyond **libc**.
+- Do not use `gets`, unbounded `scanf`, `atoi` / `atol` for counts, or ignore
+  `read()` / `write()` byte counts.
+- Do not read a whole seekable file into memory to find the tail.
+- Do not use `getopt_long` (GNU extension); argument parsing is hand-rolled.
+- Do not use `fwrite` / `fread` for file data — project standard is raw
+  `read()` / `write()`.
+- Do not stop processing remaining files after an open/read error; only a
+  write error aborts immediately.

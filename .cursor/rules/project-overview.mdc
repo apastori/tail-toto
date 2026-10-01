@@ -1,0 +1,126 @@
+---
+description: Project identity, purpose, and high-level goals for `tail-toto`
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# tail-toto — Project Overview
+
+## What This Project Is
+
+`tail-toto` is a faithful CLI replica of the GNU Core Utilities `tail` command.
+It prints the **last part** of each input (by default the last 10 lines) to
+stdout, then exits. Input is each `FILE` operand in order, or **stdin** when no
+operand is given or the operand is `-`. It does not follow files (`-f` is out of
+scope), so it never loops waiting for new data.
+
+Input strategy (chosen at **run time** per input):
+
+| Input kind | Mechanism | Heap |
+|------------|-----------|------|
+| Seekable regular file | `lseek()` from the end, read backwards in fixed chunks | none |
+| Non-seekable (pipe, terminal, stdin redirect from pipe) | stream forward, keep last N lines/bytes in a buffer | yes, freed before return |
+
+Platform I/O (chosen at **build time** by the Makefile):
+
+| Build | Mechanism |
+|-------|-----------|
+| POSIX | `open` / `read` / `lseek` / `write` |
+| Windows (`TAIL_TOTO_WIN32_IO`) | same calls + `O_BINARY` and `_setmode(..., _O_BINARY)` on stdin/stdout |
+
+## Binary Name
+
+The compiled binary must always be named **`tail-toto`**. Never rename it.
+It is produced at **`build/tail-toto`** (MinGW may also emit
+`build/tail-toto.exe`; that is the same program). The unit-test binary is
+**`build/tests/test_core`**.
+
+## Platforms
+
+| Platform | Build environment | Notes |
+|----------|-------------------|-------|
+| **Linux / WSL** | `gcc`/`clang` + GNU Make | POSIX I/O; full unit tests |
+| **Windows** | **MSYS2 UCRT64** or **Git Bash** + UCRT64 `gcc` on `PATH` | Makefile auto-selects `TAIL_TOTO_WIN32_IO` when the `<io.h>` / `_setmode` probe succeeds |
+| **Git Bash** | Put `/c/msys64/ucrt64/bin` **before** other toolchains on `PATH` | Avoid minimal MinGW toolchains; see `toolchain-structure.mdc` |
+
+Binaries are **not portable** across operating systems — build separately on Linux and on Windows.
+
+## Scope — Keep It Minimal
+
+Supporting behaviour:
+
+- Built-in `--help` / `--h` and `--version` / `--v` (detected anywhere in `argv`
+  before a `--` terminator; help wins if both appear)
+- `-n NUM`, `-nNUM`, `--lines=NUM`, `--lines NUM` — last `NUM` lines (default 10)
+- `-n +NUM` — output starting with line `NUM` (1-based; `+0` behaves as `+1`)
+- `-c NUM`, `-cNUM`, `--bytes=NUM`, `--bytes NUM` — last `NUM` bytes
+- `-c +NUM` — output starting with byte `NUM`
+- `-q`, `--quiet`, `--silent` — never print `==> name <==` headers
+- `-v`, `--verbose` — always print headers
+- Bundled short boolean flags (`-qv`); `-n` / `-c` consume the rest of the
+  token or the next argument
+- `--` ends option parsing; `-` as an operand means stdin
+- Multiple files → headers by default; continue past unreadable files
+- CLI flag strings live in `tail_toto_cli.h` (`TAIL_TOTO_ARG_*`);
+  `scan_meta_flags()` uses `argv_has_exact()`
+
+**Do not add:**
+
+- `-f` / `-F` / `--follow`, `--retry`, `--pid`, `-s` / `--sleep-interval`
+- `-z` / `--zero-terminated`
+- Multiplier suffixes on `NUM` (`b`, `K`, `kB`, `M`, …)
+- Obsolete `tail -5` / `tail +5` forms
+- Interactive or TUI modes
+- Logging or debug output in normal operation
+- Any feature that would break GNU `tail` behavioural compatibility for the
+  supported options
+
+Note: single-dash `-v` means **verbose** (as in GNU `tail`); version is only
+`--version` / `--v`. Single-dash `-h` is an invalid option.
+
+## Behavioural Contract
+
+| Invocation | Output | Exit |
+|---|---|---|
+| `tail-toto file` | last 10 lines of `file` | `0` |
+| `tail-toto -n 3 file` | last 3 lines | `0` |
+| `tail-toto -n +3 file` | from line 3 to end | `0` |
+| `tail-toto -c 5 file` | last 5 bytes | `0` |
+| `tail-toto -n 0 file` | nothing | `0` |
+| `cmd \| tail-toto` | last 10 lines of stdin | `0` |
+| `tail-toto a b` | `==> a <==\n…\n\n==> b <==\n…` | `0` |
+| `tail-toto -q a b` | contents only, no headers | `0` |
+| `tail-toto -v a` | `==> a <==\n…` | `0` |
+| `tail-toto --version` / `--v` | prints `tail-toto <version>\n` | `0` |
+| `tail-toto --help` / `--h` | prints usage on stdout | `0` |
+| `tail-toto missing` | stderr: `tail-toto: cannot open 'missing' for reading: <reason>` | `1` |
+| `tail-toto missing ok` | error for `missing`, `ok` still printed | `1` |
+| `tail-toto -n abc f` | stderr: `tail-toto: invalid number of lines: 'abc'` | `1` |
+| `tail-toto -c abc f` | stderr: `tail-toto: invalid number of bytes: 'abc'` | `1` |
+| `tail-toto -n` | stderr: `tail-toto: option requires an argument -- 'n'` + hint | `1` |
+| `tail-toto -x` | stderr: `tail-toto: invalid option -- 'x'` + hint | `1` |
+| `tail-toto --foo` | stderr: `tail-toto: unrecognized option '--foo'` + hint | `1` |
+| Read failure | stderr: `tail-toto: error reading '<name>': <reason>` | `1` |
+| Write failure | stderr: `tail-toto: write error: <reason>` (stops immediately) | `1` |
+
+`--help` anywhere in `argv` wins over `--version`. Stdin is named
+`standard input` in headers and diagnostics. A final line without a trailing
+newline still counts as a line and is printed as-is.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success — every input processed (or `--help` / `--version`) |
+| `1` | Error — usage error, any unreadable input, or write failure |
+
+## Project Layout (summary)
+
+```
+build/     — tail-toto (+ .o); build/tests/test_core; .gitkeep markers
+include/   — tail_toto.h + tail_toto_{emit,cli,io,tail}.h
+src/       — main.c + tail_toto_{emit,cli,io,tail,run}.c
+tests/     — test_runner.c + test_*.c / .h → binary build/tests/test_core
+```
+
+See `implementation.mdc`, `toolchain-structure.mdc`, and `testing.mdc` for detail.

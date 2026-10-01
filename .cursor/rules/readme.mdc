@@ -1,0 +1,62 @@
+---
+description: README.md content requirements for tail-toto
+globs: ["README.md"]
+alwaysApply: false
+---
+
+# README Requirements
+
+Keep `README.md` user-focused. Align with `project-overview.mdc` and `implementation.mdc`.
+
+## Required sections (order)
+
+1. **Title & description** — GNU `tail`-compatible; prints the last part of
+   files or stdin (default last 10 lines); raw `read(2)` / `write(2)` I/O;
+   seeks from the end on regular files; no follow mode.
+
+2. **Build**
+   - `make`, `make debug`, `make test`, `make clean`, optional `make install`
+   - Artefacts: **`build/tail-toto`**, **`build/tail-toto-debug`**,
+     **`build/tests/test_core`**; mention `build/.gitkeep` / `build/tests/.gitkeep`
+   - **Linux / WSL:** `make clean && make && make test` then `./build/tail-toto file`
+   - **Windows:** Git Bash or MSYS2 **UCRT64**; `pacman -S make mingw-w64-ucrt-x86_64-gcc`
+   - Explain Makefile **`<io.h>` probe**: POSIX vs Win32 binary-mode I/O; UCRT64 `gcc` on `PATH`
+   - Native Windows `.exe` under `build/` runs in UCRT64, Git Bash, cmd, PowerShell
+
+3. **Usage**
+   - Show invocations as `./build/tail-toto` (or installed `tail-toto`)
+   - `tail-toto [OPTION]... [FILE]...`; no `FILE` or `-` → stdin
+   - `-n` / `--lines` with `NUM` and `+NUM`; `-c` / `--bytes` with `NUM` and `+NUM`
+   - `-q` / `--quiet` / `--silent`, `-v` / `--verbose`; headers default on for
+     multiple files
+   - `--help` / `--h` and `--version` / `--v` (single-dash `-v` is verbose,
+     `-h` is invalid)
+   - Help anywhere in argv wins over version
+   - Unreadable files are reported and skipped; remaining files still print
+   - Not supported: `-f` / `-F`, `-z`, size suffixes, obsolete `tail -5`
+
+4. **Exit codes**
+   - `0`: success — all inputs processed (or `--help` / `--version`)
+   - `1`: error — usage error, any unreadable input, or write failure
+   - stderr: `tail-toto: <context>: <reason>` style diagnostics matching GNU wording
+
+5. **Layout** — brief tree matching actual repo (include `LICENSE.txt`,
+   `c_version.txt`, `build/.gitkeep`, `build/tests/.gitkeep`):
+   - `include/tail_toto.h` + `tail_toto_{emit,cli,io,tail}.h`
+   - `src/main.c` + `tail_toto_{emit,cli,io,tail,run}.c`
+   - `tests/test_runner.c` + `test_*.c` → `build/tests/test_core`
+   - Note that Windows builds skip pipe-based unit tests (`SKIP:`)
+
+## Do not document in README
+
+- Internal chain-of-thought comment blocks
+- `-Werror` flag rationale (lives in `Makefile` comments)
+- Author/licence banners on `--version` (binary prints `tail-toto <version>` only)
+- Chunk-list / ring-buffer internals or `TAIL_TOTO_BUFSIZE`
+- `argv_has_exact()` or other static helper names unless briefly needed for contributors
+
+## Style
+
+- Fenced `sh` blocks for commands.
+- No emojis unless the user asks.
+- Keep prose minimal.
