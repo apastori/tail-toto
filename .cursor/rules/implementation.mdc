@@ -10,11 +10,12 @@ alwaysApply: false
 
 | Path | Role |
 |------|------|
-| `include/tail_toto.h` | `TAIL_TOTO_VERSION_STRING`, `TAIL_TOTO_EXIT_*` enum, `enum tail_toto_mode`, `struct tail_toto_opts`, `tail_toto_run()` declaration |
+| `include/tail_toto.h` | `TAIL_TOTO_VERSION_STRING`, `TAIL_TOTO_EXIT_*` enum, `enum tail_toto_mode`, `struct tail_toto_opts` |
 | `include/tail_toto_emit.h` | `tail_toto_emit_error()`, `tail_toto_emit_open_error()`, `tail_toto_emit_read_error()`, `tail_toto_emit_write_error()`, `tail_toto_emit_invalid_count()`, `tail_toto_emit_bad_option()`, `tail_toto_emit_missing_arg()` |
 | `include/tail_toto_cli.h` | `TAIL_TOTO_ARG_*` flag macros, `scan_meta_flags()`, `tail_toto_parse_args()`, `tail_toto_parse_count()`, `print_help()`, `print_version()` |
 | `include/tail_toto_io.h` | `TAIL_TOTO_BUFSIZE`, `TAIL_TOTO_O_BINARY`, `tail_toto_write_all()`, `tail_toto_read_retry()`, `tail_toto_set_binary_stdio()` |
 | `include/tail_toto_tail.h` | `enum tail_toto_status`, `tail_toto_tail_fd()` |
+| `include/tail_toto_run.h` | `tail_toto_run()` declaration |
 | `src/main.c` | `main()` only — meta flags, parse args, call `tail_toto_run()` |
 | `src/tail_toto_emit.c` | stderr diagnostics |
 | `src/tail_toto_cli.c` | `argv_has_exact()`, meta-flag scan, option/count parsing, help/version text |

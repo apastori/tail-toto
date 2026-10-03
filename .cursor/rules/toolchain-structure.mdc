@@ -118,7 +118,8 @@ tail-toto/
 │   ├── tail_toto_emit.h
 │   ├── tail_toto_cli.h
 │   ├── tail_toto_io.h
-│   └── tail_toto_tail.h
+│   ├── tail_toto_tail.h
+│   └── tail_toto_run.h
 ├── src/
 │   ├── main.c
 │   ├── tail_toto_emit.c

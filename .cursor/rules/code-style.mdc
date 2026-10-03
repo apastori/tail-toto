@@ -28,7 +28,8 @@ alwaysApply: false
   call `tail_toto_parse_args()`, call `tail_toto_run()`, and exit. No file I/O,
   no tail logic, no formatting logic.
 - **`include/tail_toto.h`** — version string, exit code enum, `tail_toto_mode`
-  enum, `struct tail_toto_opts`, and `tail_toto_run()` declaration.
+  enum, and `struct tail_toto_opts`.
+- **`include/tail_toto_run.h`** — `tail_toto_run()` declaration.
 - **`include/tail_toto_cli.h`** — CLI flag string macros (`TAIL_TOTO_ARG_*`),
   argument and count parsing.
 - **One concern per `src/tail_toto_*.c`** — do not collapse back into a

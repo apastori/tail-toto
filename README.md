@@ -105,7 +105,7 @@ tail-toto/
 ├── build/
 │   ├── .gitkeep
 │   └── tests/.gitkeep
-├── include/   tail_toto.h + tail_toto_{emit,cli,io,tail}.h
+├── include/   tail_toto.h + tail_toto_{emit,cli,io,tail,run}.h
 ├── src/       main.c + tail_toto_{emit,cli,io,tail,run}.c
 └── tests/     test_runner.c + test_*.c / .h -> build/tests/test_core
 ```
