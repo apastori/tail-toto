@@ -1,0 +1,36 @@
+tail-toto — C language and toolchain
+====================================
+
+Language standard
+-----------------
+ISO C11, compiled with -std=c11 -Wall -Wextra -Wpedantic -Werror.
+No C++; the sources must not be compiled as C++.
+
+Feature macros
+--------------
+-D_POSIX_C_SOURCE=200809L   POSIX.1-2008: open, read, write, lseek, fstat,
+                            close, pipe, fileno.
+-D_FILE_OFFSET_BITS=64      64-bit off_t so files larger than 2 GiB can be
+                            seeked on 32-bit off_t platforms (MinGW).
+-DTAIL_TOTO_WIN32_IO        Added by the Makefile when <io.h> provides
+                            _setmode(); enables binary-mode stdin/stdout.
+
+Libraries
+---------
+libc only, on every platform.
+
+Compilers
+---------
+The Makefile uses gcc when available, otherwise clang. On Windows
+(OS=Windows_NT) it prefers C:/msys64/ucrt64/bin/gcc when present.
+
+Verified toolchains:
+  Linux / WSL Ubuntu 24.04   gcc 13.3.0, GNU Make
+  Windows 11, MSYS2 UCRT64   gcc 15.2.0 (x86_64-w64-mingw32), GNU Make
+                             from Git for Windows, run under Git Bash
+
+Debug builds
+------------
+make debug adds -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer.
+The MinGW UCRT64 gcc ships no ASan/UBSan runtime, so the debug target only
+links on Linux / WSL (or other platforms with sanitizer runtimes).
