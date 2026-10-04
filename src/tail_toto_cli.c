@@ -159,7 +159,7 @@ static int parse_long(int argc, char **argv, int *i,
                       struct tail_toto_opts *opts)
 {
     const char *arg = argv[*i];
-    const char *value;
+    const char *value = NULL;
     int bytes;
 
     /* Handle quiet long option --quiet or silent long option --silent */
@@ -175,6 +175,7 @@ static int parse_long(int argc, char **argv, int *i,
         return 0;
     }
 
+    /* Handle lines long option --lines or bytes long option --bytes */
     if (match_long_value(arg, TAIL_TOTO_ARG_LINES, &value)) {
         bytes = 0;
     } else if (match_long_value(arg, TAIL_TOTO_ARG_BYTES, &value)) {
@@ -184,15 +185,19 @@ static int parse_long(int argc, char **argv, int *i,
         return -1;
     }
 
+    /* Handle missing value, get it from the next argument */
     if (value == NULL) {
+        /* if no additional argument, emit error */
         if (*i + 1 >= argc) {
             tail_toto_emit_missing_arg(bytes ? TAIL_TOTO_ARG_BYTES
                                              : TAIL_TOTO_ARG_LINES, '\0');
             return -1;
         }
+        /* get the value from the next argument */
         *i += 1;
         value = argv[*i];
     }
+    /* Apply the count */
     return apply_count(opts, bytes, value);
 }
 
