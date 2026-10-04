@@ -25,11 +25,11 @@
 #define TAIL_TOTO_ARG_END "--"
 #define TAIL_TOTO_ARG_STDIN "-"
 
-enum tail_toto_meta {
+typedef enum tail_toto_meta {
     TAIL_TOTO_META_NONE,
     TAIL_TOTO_META_HELP,
     TAIL_TOTO_META_VERSION
-};
+} tail_toto_meta_t;
 
 /*
  * Scan argv[1..] up to the first "--" for help and version flags.
@@ -37,7 +37,7 @@ enum tail_toto_meta {
  *          version), TAIL_TOTO_META_VERSION if only a version flag is
  *          present, otherwise TAIL_TOTO_META_NONE.
  */
-enum tail_toto_meta scan_meta_flags(int argc, char **argv);
+tail_toto_meta_t scan_meta_flags(int argc, char **argv);
 
 /*
  * Parse options and operands into *opts.
