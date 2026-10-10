@@ -13,6 +13,13 @@ enum tail_toto_status {
     TAIL_TOTO_WRITE_ERR
 };
 
+struct line_chunk {
+    struct line_chunk *next;
+    size_t len;
+    uintmax_t nlines;
+    char data[TAIL_TOTO_BUFSIZE];
+};
+
 /*
  * Copy the part of in_fd selected by opts->mode and opts->count to out_fd.
  *

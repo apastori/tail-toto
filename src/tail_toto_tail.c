@@ -30,13 +30,6 @@
 #include "tail_toto_io.h"
 #include "tail_toto_tail.h"
 
-struct line_chunk {
-    struct line_chunk *next;
-    size_t len;
-    uintmax_t nlines;
-    char data[TAIL_TOTO_BUFSIZE];
-};
-
 /* Copy everything from the current offset of in_fd to EOF. */
 static enum tail_toto_status copy_to_eof(int in_fd, int out_fd)
 {
@@ -67,14 +60,16 @@ static enum tail_toto_status copy_to_eof(int in_fd, int out_fd)
 static int probe_seekable(int fd, off_t *start, off_t *end)
 {
     struct stat st;
-
+    /* check if the file is a regular file */
     if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
         return 0;
     }
+    /* get the current offset */
     *start = lseek(fd, 0, SEEK_CUR);
     if (*start < 0) {
         return 0;
     }
+    /* get the file size */
     *end = lseek(fd, 0, SEEK_END);
     if (*end <= *start) {
         lseek(fd, *start, SEEK_SET);
@@ -89,16 +84,20 @@ static ssize_t read_full(int fd, char *buf, size_t len)
     size_t got = 0;
     ssize_t n;
 
+    /* read the file until the desired length is reached or EOF is reached */
     while (got < len) {
         n = tail_toto_read_retry(fd, buf + got, len - got);
         if (n < 0) {
+            /* if the read fails, return -1 */
             return -1;
         }
         if (n == 0) {
+            /* the file has been completely read */
             break;
         }
         got += (size_t)n;
     }
+    /* return the number of bytes read */
     return (ssize_t)got;
 }
 
@@ -118,38 +117,58 @@ static enum tail_toto_status seek_lines_last(int in_fd, int out_fd,
     size_t chunk;
     size_t i;
     ssize_t got;
+    int n_lines_found = 0;
 
+    /* scan backwards in TAIL_TOTO_BUFSIZE chunks counting '\n' until the Nth one before the final line is found */
     while (pos > start) {
+        /* get the chunk size */
         chunk = (pos - start) > (off_t)sizeof buf ? sizeof buf
                                                   : (size_t)(pos - start);
+        /* Move pointer from current position that started at end of file to the start of the chunk */
         pos -= (off_t)chunk;
+        /* move the file pointer to the start of the chunk */
         if (lseek(in_fd, pos, SEEK_SET) < 0) {
             return TAIL_TOTO_READ_ERR;
         }
+        /* read the chunk */
         got = read_full(in_fd, buf, chunk);
         if (got < 0) {
             return TAIL_TOTO_READ_ERR;
         }
         i = (size_t)got;
+        /* if it's the first chunk, check if the last character is a '\n' */
         if (first) {
+            /* if it's the first chunk, skip the last character if it a end of line */
             first = 0;
+            /* if the last character is a '\n', skip it */
             if (i > 0 && buf[i - 1] == '\n') {
                 i--;
             }
         }
+        /* count the number of '\n' in the chunk backwards, i starts at end of */
+        /* buffer chunk and decrements until 0, found is the number of '\n' found */
         while (i > 0) {
             i--;
-            if (buf[i] == '\n' && ++found == n) {
-                out_start = pos + (off_t)i + 1;
-                goto emit;
+            if (buf[i] == '\n') {
+                found++;
+                /* if the Nth '\n' is found, set the output start position and break the loop*/
+                if (found == n) {
+                    out_start = pos + (off_t)i + 1;
+                    n_lines_found = 1;
+                    break;
+                }
             }
         }
+        /* if the Nth '\n' is found, break out of the loop */
+        if (n_lines_found) {
+            break;
+        }
     }
-
-emit:
+    /* change the file pointer to the output start position */
     if (lseek(in_fd, out_start, SEEK_SET) < 0) {
         return TAIL_TOTO_READ_ERR;
     }
+    /* copy the lines from the output start position to the end of the file */
     return copy_to_eof(in_fd, out_fd);
 }
 
@@ -159,7 +178,7 @@ static enum tail_toto_status seek_bytes_last(int in_fd, int out_fd,
                                              uintmax_t n)
 {
     off_t pos = start;
-
+    /* if the file is larger than N bytes, set the position to the end of the file minus N bytes */
     if ((uintmax_t)(end - start) > n) {
         pos = end - (off_t)n;
     }
@@ -284,6 +303,7 @@ static enum tail_toto_status stream_lines_last(int in_fd, int out_fd,
             errno = saved;
             return TAIL_TOTO_READ_ERR;
         }
+
         if (r == 0) {
             break;
         }
@@ -460,40 +480,56 @@ enum tail_toto_status tail_toto_tail_fd(int in_fd, int out_fd,
     off_t start;
     off_t end;
 
-    switch (opts->mode) {
-    case TAIL_TOTO_MODE_LINES_LAST:
+    /* handle the last N lines mode */
+    if (opts->mode == TAIL_TOTO_MODE_LINES_LAST) {
         if (n == 0) {
             return TAIL_TOTO_OK;
         }
         if (probe_seekable(in_fd, &start, &end)) {
+            /* seek to the last N lines */
             return seek_lines_last(in_fd, out_fd, start, end, n);
         }
+        /* stream the last N lines */
         return stream_lines_last(in_fd, out_fd, n);
+    }
 
-    case TAIL_TOTO_MODE_BYTES_LAST:
+    /* handle the last N bytes mode */
+    if (opts->mode == TAIL_TOTO_MODE_BYTES_LAST) {
         if (n == 0) {
             return TAIL_TOTO_OK;
         }
         if (probe_seekable(in_fd, &start, &end)) {
+            /* seek to the last N bytes */
             return seek_bytes_last(in_fd, out_fd, start, end, n);
         }
+        /* stream the last N bytes */
         return stream_bytes_last(in_fd, out_fd, n);
+    }
 
-    case TAIL_TOTO_MODE_LINES_FROM:
+    /* handle the +N lines mode */
+    if (opts->mode == TAIL_TOTO_MODE_LINES_FROM) {
         return lines_from(in_fd, out_fd, n);
+    }
 
-    case TAIL_TOTO_MODE_BYTES_FROM:
+    /* handle the +N bytes mode */
+    if (opts->mode == TAIL_TOTO_MODE_BYTES_FROM) {
         if (probe_seekable(in_fd, &start, &end)) {
             skip = n > 0 ? n - 1 : 0;
+            /* check if the file is large enough to skip N - 1 lines */
             if ((uintmax_t)(end - start) <= skip) {
                 return TAIL_TOTO_OK;
             }
+            /* seek to the offset after skipping N - 1 lines */
             if (lseek(in_fd, start + (off_t)skip, SEEK_SET) < 0) {
                 return TAIL_TOTO_READ_ERR;
             }
+            /* copy the rest of the file */
             return copy_to_eof(in_fd, out_fd);
         }
+        /* stream the bytes after skipping N - 1 bytes */
         return stream_bytes_from(in_fd, out_fd, n);
     }
+
+    /* default to OK */
     return TAIL_TOTO_OK;
 }

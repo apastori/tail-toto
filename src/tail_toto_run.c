@@ -59,12 +59,15 @@ int tail_toto_run(const struct tail_toto_opts *opts)
     const char *name;
     int fd;
     int i;
+    enum tail_toto_status result;
 
+    /* Set binary mode for stdin and stdout */
     tail_toto_set_binary_stdio();
 
     for (i = 0; i < opts->nfiles; i++) {
         is_stdin = strcmp(opts->files[i], TAIL_TOTO_ARG_STDIN) == 0;
         name = is_stdin ? TAIL_TOTO_STDIN_NAME : opts->files[i];
+        /* Check if the file is stdin or not and open it in binary mode */
         fd = is_stdin ? STDIN_FILENO
                       : open(opts->files[i], O_RDONLY | TAIL_TOTO_O_BINARY);
         if (fd < 0) {
@@ -73,21 +76,21 @@ int tail_toto_run(const struct tail_toto_opts *opts)
             continue;
         }
 
+        /* Write the header if it is required */
         if (show) {
             write_header(name, first_header);
             first_header = 0;
         }
 
-        switch (tail_toto_tail_fd(fd, STDOUT_FILENO, opts)) {
-        case TAIL_TOTO_OK:
-            break;
-        case TAIL_TOTO_READ_ERR:
-            tail_toto_emit_read_error(name);
-            status = TAIL_TOTO_EXIT_ERR;
-            break;
-        case TAIL_TOTO_WRITE_ERR:
+        /* Delegate to tail_toto_tail_fd() to handle the file */
+        result = tail_toto_tail_fd(fd, STDOUT_FILENO, opts);
+        if (result == TAIL_TOTO_WRITE_ERR) {
             tail_toto_emit_write_error();
             exit(TAIL_TOTO_EXIT_ERR);
+        }
+        if (result == TAIL_TOTO_READ_ERR) {
+            tail_toto_emit_read_error(name);
+            status = TAIL_TOTO_EXIT_ERR;
         }
 
         if (!is_stdin && close(fd) != 0) {
