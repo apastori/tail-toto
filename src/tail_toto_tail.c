@@ -204,9 +204,16 @@ static uintmax_t count_newlines(const char *p, size_t len)
     uintmax_t count = 0;
     const char *hit;
 
-    while (len > 0 && (hit = memchr(p, '\n', len)) != NULL) {
+    while (len > 0) {
+        /* find the next newline in the buffer */
+        hit = memchr(p, '\n', len);
+        if (hit == NULL) {
+            break;
+        }
         count++;
+        /* update the length of the buffer */
         len -= (size_t)(hit - p) + 1;
+        /* update the pointer to the next character after the newline */
         p = hit + 1;
     }
     return count;
@@ -252,12 +259,13 @@ static enum tail_toto_status emit_chunk_lines(int out_fd,
     return TAIL_TOTO_OK;
 }
 
-/*
- * Stream, last N lines (N > 0). Reads fill the newest chunk before a new
- * one is allocated. The oldest chunk is dropped while the remaining chunks
- * still contain more than N newlines: the output then starts after a
- * newline that lies entirely in the remaining chunks.
- */
+static void init_chunk(struct line_chunk *c)
+{
+    c->next = NULL;
+    c->len = 0;
+    c->nlines = 0;
+}
+
 static enum tail_toto_status stream_lines_last(int in_fd, int out_fd,
                                                uintmax_t n)
 {
@@ -270,60 +278,80 @@ static enum tail_toto_status stream_lines_last(int in_fd, int out_fd,
     ssize_t r;
     int saved;
 
+    // initialize the head of the chunk linked list
     head = malloc(sizeof *head);
+    /* if the allocation fails, return an error */
     if (head == NULL) {
         errno = ENOMEM;
         return TAIL_TOTO_READ_ERR;
     }
-    head->next = NULL;
-    head->len = 0;
-    head->nlines = 0;
+    /* initialize the head of the chunk linked list */
+    init_chunk(head);
+    /* set the tail to the head since there is only one chunk initially */
     tail = head;
-
+    /* read the input until the end */
     for (;;) {
+        /* if the current chunk is full, allocate a new chunk */
         if (tail->len == sizeof tail->data) {
+            /* allocate a new chunk */
             c = malloc(sizeof *c);
             if (c == NULL) {
+                /* if the allocation fails, free the chunk linked list and return an error */
                 free_chunks(head);
                 errno = ENOMEM;
                 return TAIL_TOTO_READ_ERR;
             }
-            c->next = NULL;
-            c->len = 0;
-            c->nlines = 0;
+            /* initialize the new chunk */
+            init_chunk(c);
+            /* set the next pointer of the current tail to the new chunk */
             tail->next = c;
+            /* update the tail pointer to the new chunk */
             tail = c;
         }
-
+        /* Read data into the current chunk */
         r = tail_toto_read_retry(in_fd, tail->data + tail->len,
                                  sizeof tail->data - tail->len);
         if (r < 0) {
+            /* save the error number before freeing the chunk linked list */
             saved = errno;
+            /* free the chunk linked list and return an error */
             free_chunks(head);
             errno = saved;
             return TAIL_TOTO_READ_ERR;
         }
 
+        /* if the end of the input is reached, break out of the loop */
         if (r == 0) {
             break;
         }
-
+        /* count the number of newlines in the current chunk */
         added = count_newlines(tail->data + tail->len, (size_t)r);
+        /* update the length of the current chunk */
         tail->len += (size_t)r;
+        /* update the number of newlines in the current chunk */
         tail->nlines += added;
+        /* update the total number of newlines */
         total += added;
 
+        /* if the total number of newlines is greater than N, free the oldest chunk */
+        /* unless there is only one chunk in the linked list */
         while (head != tail && total - head->nlines > n) {
+            /* update the total number of newlines */
             total -= head->nlines;
+            /* save head memory address before updating the head pointer */
             c = head;
+            /* update the head pointer to the next chunk */
             head = head->next;
             free(c);
         }
     }
 
     status = emit_chunk_lines(out_fd, head, tail, total, n);
+    /* save the error number before freeing the chunk linked list */
     saved = errno;
+    /* free the chunk linked list and return the status */
     free_chunks(head);
+    /* restore the error number */
     errno = saved;
     return status;
 }
@@ -355,7 +383,7 @@ static enum tail_toto_status stream_bytes_last(int in_fd, int out_fd,
         r = tail_toto_read_retry(in_fd, tmp, sizeof tmp);
         if (r < 0) {
             status = TAIL_TOTO_READ_ERR;
-            goto done;
+            break;
         }
         if (r == 0) {
             break;
@@ -374,7 +402,7 @@ static enum tail_toto_status stream_bytes_last(int in_fd, int out_fd,
             if (grown == NULL) {
                 errno = ENOMEM;
                 status = TAIL_TOTO_READ_ERR;
-                goto done;
+                break;
             }
             ring = grown;
             cap = newcap;
@@ -397,7 +425,7 @@ static enum tail_toto_status stream_bytes_last(int in_fd, int out_fd,
         }
     }
 
-    if (len > 0) {
+    if (status == TAIL_TOTO_OK && len > 0) {
         first = cap - start < len ? cap - start : len;
         if (tail_toto_write_all(out_fd, ring + start, first) != 0
             || tail_toto_write_all(out_fd, ring, len - first) != 0) {
@@ -405,7 +433,7 @@ static enum tail_toto_status stream_bytes_last(int in_fd, int out_fd,
         }
     }
 
-done:
+    /* free the ring buffer and return the status */
     saved = errno;
     free(ring);
     errno = saved;

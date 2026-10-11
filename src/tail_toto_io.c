@@ -46,9 +46,19 @@ ssize_t tail_toto_read_retry(int fd, void *buf, size_t len)
 {
     ssize_t n;
 
-    do {
+    while (1) {
         n = read(fd, buf, len);
-    } while (n < 0 && errno == EINTR);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        if (n == 0) {
+            return 0;
+        }
+        break;
+    }
     return n;
 }
 
