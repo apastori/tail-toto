@@ -49,6 +49,7 @@ endif
 SRCS := src/main.c \
         src/tail_toto_emit.c \
         src/tail_toto_cli.c \
+        src/tail_toto_count.c \
         src/tail_toto_io.c \
         src/tail_toto_tail.c \
         src/tail_toto_run.c
@@ -59,11 +60,13 @@ HDRS := $(wildcard include/*.h)
 TEST_SRCS := tests/test_runner.c \
              tests/test_util.c \
              tests/test_count_parse.c \
+             tests/test_parse_args.c \
              tests/test_lines_last.c \
              tests/test_lines_from.c \
              tests/test_bytes_last.c \
-             tests/test_stream.c
-             
+             tests/test_stream.c \
+             tests/test_zero_terminated.c
+
 TEST_OBJS := $(patsubst tests/%.c,$(TEST_BUILD_DIR)/%.o,$(TEST_SRCS))
 TEST_HDRS := $(wildcard tests/*.h)
 
