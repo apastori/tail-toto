@@ -69,11 +69,52 @@ seq 1 100 | ./build/tail-toto -n 2      # read standard input
 ./build/tail-toto --version             # also --v
 ```
 
+### Syntax reference
+
+Every accepted spelling of each option:
+
+| Purpose | Accepted forms |
+|---------|----------------|
+| Last `NUM` lines (default 10) | `-n NUM`, `-nNUM`, `--lines=NUM`, `--lines NUM` |
+| From line `NUM` to the end | `-n +NUM`, `-n+NUM`, `--lines=+NUM`, `--lines +NUM` |
+| Last `NUM` bytes | `-c NUM`, `-cNUM`, `--bytes=NUM`, `--bytes NUM` |
+| From byte `NUM` to the end | `-c +NUM`, `-c+NUM`, `--bytes=+NUM`, `--bytes +NUM` |
+| Never print headers | `-q`, `--quiet`, `--silent` |
+| Always print headers | `-v`, `--verbose` |
+| Print usage and exit | `--help`, `--h` |
+| Print version and exit | `--version`, `--v` |
+| End of options | `--` |
+| Read standard input | `-` as a `FILE` operand, or no `FILE` at all |
+
+`NUM` is a decimal number:
+
+- A leading `-` means the same as no sign: `-n -3` is `-n 3`.
+- `+0` behaves as `+1` (the whole input); `-n 0` and `-c 0` print nothing.
+- Values too large to represent are treated as "everything".
+- Size suffixes (`K`, `M`, `b`, ...) are not accepted.
+
+Combining options and files:
+
+```sh
+./build/tail-toto -qv a.txt            # bundled short flags
+./build/tail-toto -qn 5 a.txt b.txt    # -n / -c may end a bundle ...
+./build/tail-toto -qn5 a.txt b.txt     # ... and take the rest of the token
+./build/tail-toto a.txt -n 3           # options may follow file names
+./build/tail-toto -n 5 -c 20 a.txt     # last -n / -c wins: last 20 bytes
+./build/tail-toto -q -v a.txt b.txt    # last -q / -v wins: headers shown
+./build/tail-toto a.txt - b.txt        # "-" mixes stdin with files
+./build/tail-toto -n 2 -- -n.txt       # after "--", everything is a file
+./build/tail-toto -x --help            # help wins, other arguments ignored
+```
+
+- `-n` / `-c` take the rest of their token as `NUM`, so they must come last
+  in a bundle: `-n5q` is rejected as an invalid number.
+- `--help` / `--h` or `--version` / `--v` anywhere before `--` print and exit;
+  help wins if both appear. After `--` they are file names.
 - `-v` means verbose, as in GNU `tail`. Version is only `--version` /
   `--v`; `-h` is an invalid option.
-- `--help` anywhere on the command line (before `--`) wins over `--version`.
-- Short flags can be bundled (`-qn2`); the last `-n` / `-c` and the last
-  `-q` / `-v` win. `--` ends option parsing.
+- Long options must be spelled in full; abbreviations such as `--lin=3` are
+  rejected.
 - Files that cannot be opened or read are reported and skipped; the remaining
   files are still printed.
 - Not supported: `-f` / `-F` / `--follow`, `--retry`, `--pid`, `-s`, `-z`,

@@ -597,8 +597,8 @@ enum tail_toto_status tail_toto_tail_fd(int in_fd, int out_fd,
             skip = n > 0 ? n - 1 : 0;
             /* check if the file is large enough to skip N - 1 lines */
             if ((uintmax_t)(end - start) <= skip) {
-                /* the file is not large enough to skip N - 1 lines, 
-                /* return OK nothing to print out*/
+                /* the file is not large enough to skip N - 1 lines, */
+                /* return OK nothing to print out */
                 return TAIL_TOTO_OK;
             }
             /* seek to the offset after skipping N - 1 lines */
