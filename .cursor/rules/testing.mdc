@@ -11,11 +11,12 @@ alwaysApply: false
 The Makefile `test` target builds and runs **`build/tests/test_core`** (or
 `build/tests/test_core.exe` on Windows).
 
-Tests cover **count parsing** (`tail_toto_parse_count()`) and the **tail
-algorithms** (`tail_toto_tail_fd()`) on both the seekable path (temporary
-regular files) and the stream path (pipes). They do **not** exercise
-`tail_toto_run()`, headers across multiple operands, or the process exit code.
-There are **no** subprocess / integration tests in-tree.
+Tests cover **number parsing** (`tail_toto_count.c`), **argument parsing**
+(`tail_toto_parse_args()`, successful parses only), and the **tail algorithms**
+(`tail_toto_tail_fd()`) on both the seekable path (temporary regular files) and
+the stream path (pipes), including `-z`. They do **not** exercise
+`tail_toto_run()`, headers across multiple operands, diagnostics text, or the
+process exit code. There are **no** subprocess / integration tests in-tree.
 
 When the build defines **`TAIL_TOTO_WIN32_IO`**, pipe-based (stream path)
 tests print **`SKIP: <name>`** and return — `make test` still exits 0. Seekable
@@ -26,14 +27,17 @@ and parsing tests run on every platform.
 | File | Role |
 |------|------|
 | `tests/test_runner.c` | `main()` — invokes all suites in fixed order |
-| `tests/test_util.c` / `.h` | helpers: temp file from string, run `tail_toto_tail_fd()` into a temp file, compare output |
-| `tests/test_count_parse.c` / `.h` | `10`, `+5`, `0`, overflow saturation; rejects `""`, `abc`, `5x`, `+` |
+| `tests/test_util.c` / `.h` | helpers: temp file from string, run `tail_toto_tail_fd()` into a temp file (optionally with a delimiter), compare output |
+| `tests/test_count_parse.c` / `.h` | `tail_toto_parse_count()` (digits, whitespace, `+`, suffixes, overflow → `_OVERFLOW`, invalid forms), `tail_toto_parse_uint()`, `tail_toto_parse_seconds()` |
+| `tests/test_parse_args.c` / `.h` | `tail_toto_parse_args()` on valid argv: obsolete forms, sticky `+`, prefixes, help/version order, `-z`, interleaved operands, `POSIXLY_CORRECT` |
 | `tests/test_lines_last.c` / `.h` | seekable `-n N`: default 10, N > lines, `N = 0`, no trailing newline, empty file, chunk-boundary file |
 | `tests/test_lines_from.c` / `.h` | seekable `-n +N`: `+1`, `+0`, `+N` beyond EOF |
 | `tests/test_bytes_last.c` / `.h` | seekable `-c N` and `-c +N` |
 | `tests/test_stream.c` / `.h` | pipe input for `-n N` and `-c N` (`SKIP` on Win32) |
+| `tests/test_zero_terminated.c` / `.h` | `-z` (NUL delimiter) on seekable files and pipes (pipe part `SKIP` on Win32) |
 
-Order in `test_runner.c`: count_parse → lines_last → lines_from → bytes_last → stream.
+Order in `test_runner.c`: count_parse → parse_args → lines_last → lines_from →
+bytes_last → stream → zero_terminated.
 
 One scenario per `.c` / `.h` pair; headers declare `void test_<name>_run(void)`.
 `test_util` is a helper, not a scenario.
@@ -66,17 +70,27 @@ applicable).
 
 ## Required cases
 
-1. **Count parsing:** valid forms accepted with correct value and `+` flag;
-   invalid forms return `-1`; huge values saturate to `UINTMAX_MAX`.
-2. **Last N lines:** `"a\nb\nc\n"` with N = 2 → `"b\nc\n"`; N larger than the
+1. **Count parsing:** valid forms (digits, leading whitespace, `+`, every suffix
+   family, suffix alone) give the right value; invalid forms return
+   `_INVALID`; values above `UINTMAX_MAX` return `_OVERFLOW`; `UINTMAX_MAX`
+   itself is valid. PID / stats bounds; seconds accept decimals, hex, `inf`
+   and reject `nan`, negatives, trailing characters, overflow.
+2. **Argument parsing:** obsolete `-5`, `+5`, `-3c`, `-2b`, `-l`, `+` and
+   their "not obsolete" cases; `-n +3 -n 2` keeps from-start; `--lin=3`,
+   `--h` → HELP, `--vers` → VERSION, first of `--version --help` wins;
+   `-z` sets the delimiter; operands interleaved, but not with
+   `POSIXLY_CORRECT`. Only argv that parse without error (no stderr output).
+3. **Last N lines:** `"a\nb\nc\n"` with N = 2 → `"b\nc\n"`; N larger than the
    line count → whole file; N = 0 → empty output.
-3. **Unterminated last line:** `"a\nb"` with N = 1 → `"b"` (no newline added).
-4. **Chunk boundary:** input larger than `TAIL_TOTO_BUFSIZE` where the target
+4. **Unterminated last line:** `"a\nb"` with N = 1 → `"b"` (no newline added).
+5. **Chunk boundary:** input larger than `TAIL_TOTO_BUFSIZE` where the target
    newline straddles a chunk boundary.
-5. **`+N` lines / bytes:** `+1` and `+0` → whole file; `+N` past EOF → empty.
-6. **Last N bytes:** N less than, equal to, and greater than file size.
-7. **Stream path (POSIX only):** same expectations as 2 and 6 via `pipe()`.
-8. Never call `exit()` from a test; use `assert()` or `return` only.
+6. **`+N` lines / bytes:** `+1` and `+0` → whole file; `+N` past EOF → empty.
+7. **Last N bytes:** N less than, equal to, and greater than file size.
+8. **Stream path (POSIX only):** same expectations as 3 and 7 via `pipe()`.
+9. **`-z`:** NUL-delimited records for last N and `+N`, newlines treated as
+   ordinary bytes, seekable and stream paths.
+10. Never call `exit()` from a test; use `assert()` or `return` only.
 
 ## Adding tests
 
@@ -97,12 +111,15 @@ seq 1 20 > /tmp/t.txt
 ./build/tail-toto /tmp/t.txt                # expect: 11..20, exit 0
 ./build/tail-toto -n 3 /tmp/t.txt           # expect: 18..20, exit 0
 ./build/tail-toto -n +18 /tmp/t.txt         # expect: 18..20, exit 0
+./build/tail-toto -3 /tmp/t.txt             # expect: 18..20 (obsolete), exit 0
 ./build/tail-toto -c 3 /tmp/t.txt           # expect: "20\n" (last 3 bytes), exit 0
+./build/tail-toto -c 1K /tmp/t.txt          # expect: whole file, exit 0
 seq 1 20 | ./build/tail-toto -n 2           # expect: 19, 20 (stream path), exit 0
 ./build/tail-toto /tmp/t.txt /tmp/t.txt     # expect: two "==> ... <==" headers, exit 0
 ./build/tail-toto -q /tmp/t.txt /tmp/t.txt  # expect: no headers, exit 0
 ./build/tail-toto missing /tmp/t.txt        # expect: error on stderr, file printed, exit 1
 ./build/tail-toto -n abc /tmp/t.txt         # expect: invalid number of lines, exit 1
+./build/tail-toto --v                       # expect: ambiguous option, exit 1
 ./build/tail-toto --version                 # expect: tail-toto <version>, exit 0
 ./build/tail-toto --help                    # expect: usage text on stdout, exit 0
 diff <(tail -n 7 /tmp/t.txt) <(./build/tail-toto -n 7 /tmp/t.txt)   # POSIX: expect no diff

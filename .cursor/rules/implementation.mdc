@@ -11,14 +11,16 @@ alwaysApply: false
 | Path | Role |
 |------|------|
 | `include/tail_toto.h` | `TAIL_TOTO_VERSION_STRING`, `TAIL_TOTO_EXIT_*` enum, `enum tail_toto_mode`, `struct tail_toto_opts` |
-| `include/tail_toto_emit.h` | `tail_toto_emit_error()`, `tail_toto_emit_open_error()`, `tail_toto_emit_read_error()`, `tail_toto_emit_write_error()`, `tail_toto_emit_invalid_count()`, `tail_toto_emit_bad_option()`, `tail_toto_emit_missing_arg()` |
-| `include/tail_toto_cli.h` | `TAIL_TOTO_ARG_*` flag macros, `scan_meta_flags()`, `tail_toto_parse_args()`, `tail_toto_parse_count()`, `print_help()`, `print_version()` |
+| `include/tail_toto_emit.h` | every stderr diagnostic and warning (`tail_toto_emit_*()`) |
+| `include/tail_toto_cli.h` | `TAIL_TOTO_ARG_*` flag macros, `enum tail_toto_parse_result`, `tail_toto_parse_args()`, `print_help()`, `print_version()` |
+| `include/tail_toto_count.h` | `enum tail_toto_count_result`, `tail_toto_parse_count()`, `tail_toto_parse_uint()`, `tail_toto_parse_seconds()` |
 | `include/tail_toto_io.h` | `TAIL_TOTO_BUFSIZE`, `TAIL_TOTO_O_BINARY`, `tail_toto_write_all()`, `tail_toto_read_retry()`, `tail_toto_set_binary_stdio()` |
 | `include/tail_toto_tail.h` | `enum tail_toto_status`, `tail_toto_tail_fd()` |
 | `include/tail_toto_run.h` | `tail_toto_run()` declaration |
-| `src/main.c` | `main()` only — meta flags, parse args, call `tail_toto_run()` |
+| `src/main.c` | `main()` only — parse args, dispatch help/version, print follow-option warnings, call `tail_toto_run()` |
 | `src/tail_toto_emit.c` | stderr diagnostics |
-| `src/tail_toto_cli.c` | `argv_has_exact()`, meta-flag scan, option/count parsing, help/version text |
+| `src/tail_toto_cli.c` | option parsing (long-option table, short clusters, obsolete form), help/version text |
+| `src/tail_toto_count.c` | NUM, PID / stats and seconds parsing (no diagnostics) |
 | `src/tail_toto_io.c` | `write()` / `read()` retry wrappers, Win32 binary-mode setup |
 | `src/tail_toto_tail.c` | `tail_toto_tail_fd()` — seekable and stream algorithms for lines/bytes, last-N and `+N` |
 | `src/tail_toto_run.c` | `tail_toto_run()` — iterate operands, open/close, headers, aggregate exit status |
@@ -49,6 +51,9 @@ struct tail_toto_opts {
     enum tail_toto_mode mode;
     uintmax_t count;
     int headers;                 /* -1 auto, 0 = -q, 1 = -v */
+    char delim;                  /* '\n', or '\0' with -z */
+    int retry;                   /* --retry seen (warning only) */
+    int pid_given;               /* --pid=PID with PID != 0 (warning only) */
     int nfiles;
     char **files;                /* points into argv; never copied */
 };
@@ -56,37 +61,58 @@ struct tail_toto_opts {
 
 ## Argument handling (`src/main.c`, `src/tail_toto_cli.c`)
 
-Flag macros in `tail_toto_cli.h`:
+Flag macros in `tail_toto_cli.h` (`TAIL_TOTO_ARG_*`): `--help`, `--version`,
+`--lines` / `-n`, `--bytes` / `-c`, `--quiet` / `--silent` / `-q`,
+`--verbose` / `-v`, `--zero-terminated` / `-z`, `--sleep-interval` / `-s`,
+`--pid`, `--retry`, `--max-unchanged-stats`, `--` and `-`. The parser compares
+against these macros only.
 
-- `TAIL_TOTO_ARG_HELP` / `TAIL_TOTO_ARG_HELP_SHORT` → `--help` / `--h`
-- `TAIL_TOTO_ARG_VERSION` / `TAIL_TOTO_ARG_VERSION_SHORT` → `--version` / `--v`
-- `TAIL_TOTO_ARG_LINES` / `TAIL_TOTO_ARG_LINES_SHORT` → `--lines` / `-n`
-- `TAIL_TOTO_ARG_BYTES` / `TAIL_TOTO_ARG_BYTES_SHORT` → `--bytes` / `-c`
-- `TAIL_TOTO_ARG_QUIET` / `TAIL_TOTO_ARG_SILENT` / `TAIL_TOTO_ARG_QUIET_SHORT` → `--quiet` / `--silent` / `-q`
-- `TAIL_TOTO_ARG_VERBOSE` / `TAIL_TOTO_ARG_VERBOSE_SHORT` → `--verbose` / `-v`
-- `TAIL_TOTO_ARG_END` → `--`
+`tail_toto_parse_args()` returns `enum tail_toto_parse_result`
+(`RUN`, `HELP`, `VERSION`, `ERROR`); `main()` prints help/version, or on `RUN`
+emits the `--retry` warning, then the PID warning, then returns 0 at once when
+`count == 0` in a `*_LAST` mode (GNU opens nothing then: no headers, no open
+errors), otherwise calls `tail_toto_run()`.
 
-`scan_meta_flags()` uses static **`argv_has_exact()`** (no hardcoded strings in the scan logic).
-
-1. Scan `argv[1…]` up to the first `--` for help flags → help + exit 0 (**wins** over version).
-2. Else scan for version flags → `tail-toto <version>\n` + exit 0.
-3. Else `tail_toto_parse_args()` fills `struct tail_toto_opts`:
-   - `-n NUM`, `-nNUM`, `--lines=NUM`, `--lines NUM` (same for `-c` / `--bytes`)
-   - Short boolean flags may be bundled (`-qv`); `n` / `c` inside a bundle
-     consume the rest of the token, or the next argument if the token ends
-   - Last `-n` / `-c` wins; last `-q` / `-v` wins
-   - `--` ends options; a lone `-` is an operand (stdin)
-   - Remaining arguments are file operands, kept in order
-   - On error: emit diagnostic + hint, return failure → `main()` exits 1
+1. **Obsolete form** (checked first, GNU `parse_obsolete_option`): only when
+   `argc == 2`, or `argc == 3` and `argv[2]` is not an option (`-` is fine), or
+   `argc` is 3–4 and `argv[2]` is `--`. `argv[1]` is `+` or `-` (but not `-`
+   alone or `-c` alone), optional digits (default 10), optional one of `b`
+   (512-byte blocks), `c` (bytes), `l` (lines), then the end. `+` means from
+   start. Digit overflow → `invalid number: '<argv1>': <strerror(ERANGE)>`;
+   `b` scaling overflow → `invalid number: '<argv1>'`. Anything else falls
+   through to normal parsing (a `+…` word is then a FILE).
+2. **Left-to-right loop** over the remaining arguments:
+   - `-`, words not starting with `-`, and everything after `--` are operands,
+     compacted in place into `argv[1 …]`; with `POSIXLY_CORRECT` set the first
+     operand ends option parsing
+   - Long options: table in GNU order (bytes, lines, max-unchanged-stats, pid,
+     quiet, retry, silent, sleep-interval, verbose, zero-terminated, help,
+     version); any unique prefix matches; an exact match wins; entries with the
+     same action never make each other ambiguous; value from `=VALUE` or the
+     next argument
+   - Short clusters (`-qvz`, `-qn5`): `n`, `c`, `s` take the rest of the token
+     or the next argument; a digit → `option used in invalid context -- D`
+     (no hint line)
+   - `--help` / `--version` return immediately when reached
+3. `-n` / `-c` value: a leading `-` is stripped; a leading `+` sets the
+   **sticky** from-start flag (never cleared) and stays in the string;
+   `tail_toto_parse_count()` then parses it. Mode = lines/bytes from the
+   option, `*_FROM` when the sticky flag is set.
 4. If no operands → treat as a single `-` operand.
-5. Call `tail_toto_run(&opts)` and return its exit code.
 
-`tail_toto_parse_count(const char *s, uintmax_t *out, int *from_start)`:
+## Number parsing (`src/tail_toto_count.c`)
 
-- Optional leading `+` sets `from_start`; optional leading `-` is accepted and
-  ignored (GNU compatible); then one or more decimal digits, nothing else
-- Uses `strtoumax()` with `errno` check; overflow saturates to `UINTMAX_MAX`
-- Returns `0` on success, `-1` on invalid input (no diagnostics inside)
+All functions return `enum tail_toto_count_result`
+(`TAIL_TOTO_COUNT_OK`, `_INVALID`, `_OVERFLOW`) and print nothing.
+
+- `tail_toto_parse_count(s, &out)`: leading whitespace, optional `+`, decimal
+  digits, optional suffix (`b`, `kB`, `K`/`k`, `KiB`, `MB`, `M`/`m`, … `Q`); a
+  suffix alone means 1. Overflow → `_OVERFLOW` (an invalid suffix wins).
+  Hand-rolled (no `strtoumax`) so it behaves identically on every C library.
+- `tail_toto_parse_uint(s, max, &out)`: same without suffixes, bounded by `max`
+  (PID: `INT_MAX`; stats: `UINTMAX_MAX`).
+- `tail_toto_parse_seconds(s)`: `strtod()`; invalid when nothing converts,
+  trailing characters remain, the value overflows, or it is not `>= 0` (NaN).
 
 Error message formats (all **stderr**):
 
@@ -97,12 +123,31 @@ Try 'tail-toto --help' for more information.
 tail-toto: unrecognized option '--foo'
 Try 'tail-toto --help' for more information.
 
+tail-toto: option '--v' is ambiguous; possibilities: '--verbose' '--version'
+Try 'tail-toto --help' for more information.
+
+tail-toto: option '--quiet' doesn't allow an argument
+Try 'tail-toto --help' for more information.
+
 tail-toto: option requires an argument -- 'n'
 Try 'tail-toto --help' for more information.
 
+tail-toto: option '--lines' requires an argument
+Try 'tail-toto --help' for more information.
+
+tail-toto: option used in invalid context -- 5
 tail-toto: invalid number of lines: 'abc'
-tail-toto: invalid number of bytes: 'abc'
+tail-toto: invalid number of bytes: '1Q': Value too large for defined data type
+tail-toto: invalid number: '-99999999999999999999': Numerical result out of range
+tail-toto: invalid number of seconds: 'abc'
+tail-toto: invalid PID: 'abc'
+tail-toto: invalid maximum number of unchanged stats between opens: 'abc'
+tail-toto: warning: --retry ignored; --retry is useful only when following
+tail-toto: warning: PID ignored; --pid=PID is useful only when following
 ```
+
+Overflow reasons use `strerror(EOVERFLOW)` (`strerror(ERANGE)` for the obsolete
+form), so their text comes from the platform C library.
 
 ## Running (`tail_toto_run`)
 
@@ -123,11 +168,13 @@ return status
 ```
 
 A header is only written once the file opens successfully (GNU behaviour).
+Headers always end in `'\n'`, even with `-z`.
 
 ## Tail algorithms (`tail_toto_tail_fd`)
 
 Returns `TAIL_TOTO_OK`, `TAIL_TOTO_READ_ERR`, or `TAIL_TOTO_WRITE_ERR` with
-`errno` preserved. Never exits, never prints diagnostics.
+`errno` preserved. Never exits, never prints diagnostics. Every line algorithm
+uses `opts->delim` as the line delimiter.
 
 Dispatch: `fstat()` → if `S_ISREG` and `lseek(fd, 0, SEEK_CUR)` succeeds →
 seekable path; else stream path.
@@ -138,8 +185,8 @@ seekable path; else stream path.
 end = lseek(fd, 0, SEEK_END)
 if count == 0 → return OK
 read chunks of TAIL_TOTO_BUFSIZE backwards from end
-ignore a trailing '\n' at end-1 (it terminates the last line, not a new one)
-count '\n' scanning backwards; start = offset just after the Nth '\n'
+ignore a trailing delimiter at end-1 (it terminates the last line)
+count delimiters scanning backwards; start = offset just after the Nth one
 if file start reached first → start = initial offset
 lseek(fd, start, SEEK_SET); stream to out_fd
 ```
@@ -150,7 +197,7 @@ lseek(fd, start, SEEK_SET); stream to out_fd
 
 ### Stream, last N lines
 
-Read fixed-size chunks into a list; track newline count per chunk; evict the
+Read fixed-size chunks into a list; track delimiter count per chunk; evict the
 oldest chunk while the remaining chunks still contain more than N lines. At EOF,
 skip leading surplus lines in the oldest chunk and write the rest.
 
@@ -161,14 +208,14 @@ Ring buffer holding at most N bytes; at EOF write it out in at most two
 
 ### `+N` modes (seekable or stream)
 
-Skip forward: lines → consume until `N - 1` newlines seen (`+0` ≡ `+1`);
+Skip forward: lines → consume until `N - 1` delimiters seen (`+0` ≡ `+1`);
 bytes → skip `N - 1` bytes (`lseek` when seekable). Then stream the rest.
 
 ## Output
 
 - File data and headers are emitted via **`tail_toto_write_all()`** (raw
   `write()`) — no `printf` / `puts` on this path.
-- Bytes are written exactly as read; no newline is appended to a final
+- Bytes are written exactly as read; no delimiter is appended to a final
   unterminated line.
 - `--help` and `--version` text may use `printf` / `fputs` to stdout.
 
@@ -187,8 +234,7 @@ All diagnostics on **stderr**:
 - Open failure: `tail-toto: cannot open '<name>' for reading: <strerror(errno)>`
 - Read failure: `tail-toto: error reading '<name>': <strerror(errno)>`
 - Write failure: `tail-toto: write error: <strerror(errno)>`
-- Invalid count: `tail-toto: invalid number of lines|bytes: '<arg>'`
-- Option errors: see formats above, each followed by the hint line
+- Usage errors and warnings: see formats above
 
 Never print errors to stdout.
 

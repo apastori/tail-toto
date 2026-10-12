@@ -10,9 +10,11 @@ Keep `README.md` user-focused. Align with `project-overview.mdc` and `implementa
 
 ## Required sections (order)
 
-1. **Title & description** — GNU `tail`-compatible; prints the last part of
-   files or stdin (default last 10 lines); raw `read(2)` / `write(2)` I/O;
-   seeks from the end on regular files; no follow mode.
+1. **Title & description** — GNU `tail`-compatible (matches GNU coreutils
+   `tail` 9.4 except follow mode); prints the last part of files or stdin
+   (default last 10 lines); raw `read(2)` / `write(2)` I/O; seeks from the end
+   on regular files; no follow mode. List versions: v1.0.0 (POSIX-style
+   subset, git tag) and v2.0.0 (current, GNU-compatible).
 
 2. **Build**
    - `make`, `make debug`, `make test`, `make clean`, optional `make install`
@@ -26,14 +28,22 @@ Keep `README.md` user-focused. Align with `project-overview.mdc` and `implementa
 3. **Usage**
    - Show invocations as `./build/tail-toto` (or installed `tail-toto`)
    - `tail-toto [OPTION]... [FILE]...`; no `FILE` or `-` → stdin
-   - `-n` / `--lines` with `NUM` and `+NUM`; `-c` / `--bytes` with `NUM` and `+NUM`
-   - `-q` / `--quiet` / `--silent`, `-v` / `--verbose`; headers default on for
-     multiple files
-   - `--help` / `--h` and `--version` / `--v` (single-dash `-v` is verbose,
-     `-h` is invalid)
-   - Help anywhere in argv wins over version
+   - Options table: `-n` / `--lines` and `-c` / `--bytes` with `NUM` and
+     `+NUM`; `-q` / `--quiet` / `--silent`, `-v` / `--verbose`; `-z` /
+     `--zero-terminated`; `--retry`, `--pid`, `-s` / `--sleep-interval`,
+     `--max-unchanged-stats` (accepted, ignored without follow mode);
+     `--help`, `--version`
+   - NUM rules and multiplier suffix table; overflow is an error; sticky `+`
+   - Obsolete syntax (`-5`, `+5`, `-3c`, `-2b`) and when it applies
+   - Long-option prefixes (`--lin`, `--h`; `--v` ambiguous); options processed
+     in order (first `--help` / `--version` wins); `-v` is verbose, `-h` invalid
+   - Headers default on for multiple files; `-` is stdin; `--` ends options;
+     `POSIXLY_CORRECT`
    - Unreadable files are reported and skipped; remaining files still print
-   - Not supported: `-f` / `-F`, `-z`, size suffixes, obsolete `tail -5`
+   - "Differences from GNU tail" subsection: no follow mode (`-f` / `-F` /
+     `--follow` rejected), `-5f` not recognized, `_POSIX2_VERSION` ignored, no
+     `---presume-input-pipe`, own `--help` / `--version` text, `write error`
+     wording, platform `<reason>` texts
 
 4. **Exit codes**
    - `0`: success — all inputs processed (or `--help` / `--version`)
@@ -42,8 +52,8 @@ Keep `README.md` user-focused. Align with `project-overview.mdc` and `implementa
 
 5. **Layout** — brief tree matching actual repo (include `LICENSE.txt`,
    `c_version.txt`, `build/.gitkeep`, `build/tests/.gitkeep`):
-   - `include/tail_toto.h` + `tail_toto_{emit,cli,io,tail,run}.h`
-   - `src/main.c` + `tail_toto_{emit,cli,io,tail,run}.c`
+   - `include/tail_toto.h` + `tail_toto_{emit,cli,count,io,tail,run}.h`
+   - `src/main.c` + `tail_toto_{emit,cli,count,io,tail,run}.c`
    - `tests/test_runner.c` + `test_*.c` → `build/tests/test_core`
    - Note that Windows builds skip pipe-based unit tests (`SKIP:`)
 
@@ -53,7 +63,7 @@ Keep `README.md` user-focused. Align with `project-overview.mdc` and `implementa
 - `-Werror` flag rationale (lives in `Makefile` comments)
 - Author/licence banners on `--version` (binary prints `tail-toto <version>` only)
 - Chunk-list / ring-buffer internals or `TAIL_TOTO_BUFSIZE`
-- `argv_has_exact()` or other static helper names unless briefly needed for contributors
+- `find_long()`, `parse_obsolete()` or other static helper names unless briefly needed for contributors
 
 ## Style
 

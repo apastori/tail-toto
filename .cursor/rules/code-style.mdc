@@ -24,14 +24,15 @@ alwaysApply: false
 
 ## Module conventions
 
-- **`src/main.c`** stays thin — meta-flag scan, dispatch to help/version,
-  call `tail_toto_parse_args()`, call `tail_toto_run()`, and exit. No file I/O,
-  no tail logic, no formatting logic.
+- **`src/main.c`** stays thin — call `tail_toto_parse_args()`, dispatch to
+  help/version, emit the follow-option warnings, call `tail_toto_run()`, and
+  exit. No file I/O, no tail logic, no formatting logic.
 - **`include/tail_toto.h`** — version string, exit code enum, `tail_toto_mode`
   enum, and `struct tail_toto_opts`.
 - **`include/tail_toto_run.h`** — `tail_toto_run()` declaration.
 - **`include/tail_toto_cli.h`** — CLI flag string macros (`TAIL_TOTO_ARG_*`),
-  argument and count parsing.
+  argument parsing, help and version.
+- **`include/tail_toto_count.h`** — NUM / PID / stats / seconds parsing.
 - **One concern per `src/tail_toto_*.c`** — do not collapse back into a
   monolith without reason.
 - **Tail algorithms** (`tail_toto_tail.c`) never call `exit()` and never print
@@ -44,7 +45,7 @@ alwaysApply: false
 
 | Kind | Style | Examples |
 |------|-------|----------|
-| Functions | `snake_case` | `tail_toto_run`, `tail_toto_tail_fd`, `argv_has_exact`, `print_help` |
+| Functions | `snake_case` | `tail_toto_run`, `tail_toto_tail_fd`, `find_long`, `print_help` |
 | Macros / constants | `UPPER_SNAKE_CASE` | `TAIL_TOTO_VERSION_STRING`, `TAIL_TOTO_ARG_LINES`, `TAIL_TOTO_BUFSIZE` |
 | Types | `snake_case` with prefix | `struct tail_toto_opts`, `enum tail_toto_mode` |
 | Headers | `TAIL_TOTO_*_H` guards | `TAIL_TOTO_H`, `TAIL_TOTO_CLI_H`, `TAIL_TOTO_TAIL_H` |
@@ -81,10 +82,15 @@ Public API prefix: **`tail_toto_`** for module entry points.
 - **stderr only:** `tail-toto: cannot open '<name>' for reading: <reason>`.
 - **stderr only:** `tail-toto: error reading '<name>': <reason>`.
 - **stderr only:** `tail-toto: write error: <reason>`.
-- **stderr only:** `tail-toto: invalid number of lines|bytes: '<arg>'`.
-- **stderr only:** invalid / unrecognized option and missing-argument messages + hint line.
-- Count values are `uintmax_t`; overflow saturates to `UINTMAX_MAX` (GNU treats
-  huge counts as "everything").
+- **stderr only:** `tail-toto: invalid number of lines|bytes: '<arg>'`
+  (+ `: <strerror(EOVERFLOW)>` when the value is too large).
+- **stderr only:** invalid / unrecognized / ambiguous option, "doesn't allow an
+  argument" and missing-argument messages + hint line; "option used in invalid
+  context" without the hint line.
+- **stderr only:** `tail-toto: warning: ...` for `--retry` / `--pid` without
+  follow mode (processing continues, exit status unaffected).
+- Count values are `uintmax_t`; values above `UINTMAX_MAX` are a usage error
+  ("Value too large for defined data type"), as in GNU `tail` 9.4.
 - Implemented in `tail_toto_emit.c`.
 
 ## Comments
@@ -107,7 +113,7 @@ Public API prefix: **`tail_toto_`** for module entry points.
 
 - Do not compile as C++.
 - Do not link extra libraries beyond **libc**.
-- Do not use `gets`, unbounded `scanf`, `atoi` / `atol` for counts, or ignore
+- Do not use `gets`, unbounded `scanf`, `atoi` / `atol` / `strtoumax` for counts, or ignore
   `read()` / `write()` byte counts.
 - Do not read a whole seekable file into memory to find the tail.
 - Do not use `getopt_long` (GNU extension); argument parsing is hand-rolled.

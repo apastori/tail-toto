@@ -14,6 +14,12 @@ stdout, then exits. Input is each `FILE` operand in order, or **stdin** when no
 operand is given or the operand is `-`. It does not follow files (`-f` is out of
 scope), so it never loops waiting for new data.
 
+Versions: **v1.0.0** (git tag) is the POSIX-style subset (plain decimal NUM,
+no suffixes, exact long options, `--h` / `--v` shortcuts).
+
+**v2.0.0** (current) is GNU-compatible: it matches GNU coreutils `tail` 9.4
+for every invocation that does not need follow mode.
+
 Input strategy (chosen at **run time** per input):
 
 | Input kind | Mechanism | Heap |
@@ -47,36 +53,64 @@ Binaries are **not portable** across operating systems — build separately on L
 
 ## Scope — Keep It Minimal
 
-Supporting behaviour:
+Supporting behaviour (all as in GNU `tail` 9.4):
 
-- Built-in `--help` / `--h` and `--version` / `--v` (detected anywhere in `argv`
-  before a `--` terminator; help wins if both appear)
+- `--help` / `--version`, processed **in order** with the other options: the
+  first one reached wins, and an earlier usage error is reported instead
 - `-n NUM`, `-nNUM`, `--lines=NUM`, `--lines NUM` — last `NUM` lines (default 10)
 - `-n +NUM` — output starting with line `NUM` (1-based; `+0` behaves as `+1`)
 - `-c NUM`, `-cNUM`, `--bytes=NUM`, `--bytes NUM` — last `NUM` bytes
 - `-c +NUM` — output starting with byte `NUM`
+- A leading `-` on NUM is ignored; a leading `+` is **sticky**: once seen, it
+  stays in effect for later `-n` / `-c` options (`-n +3 -n 2` = from line 2)
+- NUM: optional leading whitespace, optional `+`, decimal digits, optional
+  multiplier suffix: `b` 512, `kB` 1000, `K`/`k` 1024, `MB` 1000², `M`/`m` 1024²,
+  then `G`, `T`, `P`, `E`, `Z`, `Y`, `R`, `Q`; `xB` = power of 1000, `xiB` = power
+  of 1024; a suffix alone means 1 (`K` = 1024). Overflow → "Value too large" error
+- Obsolete syntax `-NUM[bcl]` / `+NUM[bcl]` when it is the only option: alone,
+  with one FILE, or followed by `--` and at most one FILE (`-5`, `+5`, `-3c`,
+  `-2b`, `-l`, `+`). Digits anywhere else → `option used in invalid context -- 5`
 - `-q`, `--quiet`, `--silent` — never print `==> name <==` headers
 - `-v`, `--verbose` — always print headers
-- Bundled short boolean flags (`-qv`); `-n` / `-c` consume the rest of the
-  token or the next argument
+- `-z`, `--zero-terminated` — line delimiter is NUL, not newline
+- Follow-only options, with GNU's behaviour when not following: `--retry`
+  (warning), `--pid=PID` (validated; warning when PID ≠ 0), `-s N` /
+  `--sleep-interval=N` (validated, ignored), `--max-unchanged-stats=N`
+  (validated, ignored)
+- Long options may be abbreviated to any unique prefix (`--lin`, `--h`);
+  `--v` is ambiguous (`--verbose` vs `--version`), `--s` is ambiguous
+  (`--silent` vs `--sleep-interval`)
+- Short options may be clustered (`-qv`, `-qn5`); `-n` / `-c` / `-s` consume the
+  rest of the token or the next argument
+- Options and FILE operands may be interleaved (`tail-toto a.txt -n 3`), unless
+  `POSIXLY_CORRECT` is set (then the first FILE ends option parsing)
 - `--` ends option parsing; `-` as an operand means stdin
 - Multiple files → headers by default; continue past unreadable files
-- CLI flag strings live in `tail_toto_cli.h` (`TAIL_TOTO_ARG_*`);
-  `scan_meta_flags()` uses `argv_has_exact()`
+- CLI flag strings live in `tail_toto_cli.h` (`TAIL_TOTO_ARG_*`); the option
+  parser compares against those macros only
 
 **Do not add:**
 
-- `-f` / `-F` / `--follow`, `--retry`, `--pid`, `-s` / `--sleep-interval`
-- `-z` / `--zero-terminated`
-- Multiplier suffixes on `NUM` (`b`, `K`, `kB`, `M`, …)
-- Obsolete `tail -5` / `tail +5` forms
+- `-f` / `-F` / `--follow` (follow mode)
+- GNU's hidden `---presume-input-pipe` option
 - Interactive or TUI modes
 - Logging or debug output in normal operation
+- Single-dash `-h` as help (`-h` is an invalid option, as in GNU `tail`;
+  `-v` is **verbose**)
 - Any feature that would break GNU `tail` behavioural compatibility for the
   supported options
 
-Note: single-dash `-v` means **verbose** (as in GNU `tail`); version is only
-`--version` / `--v`. Single-dash `-h` is an invalid option.
+**Remaining differences from GNU `tail`** (deliberate):
+
+- No follow mode: `-f` / `-F` / `--follow` are rejected (GNU ignores `-f` on a
+  pipe); long-option prefixes of `--follow` (`--f`, `--fo`) are unrecognized
+- The obsolete forms with `f` (`-5f`, `+5f`) are not recognized
+- `_POSIX2_VERSION` is ignored (behaves as GNU's default, POSIX 2008)
+- Program name `tail-toto`; `--version` prints `tail-toto <version>` only;
+  `--help` text is tail-toto's own
+- Write failures are always reported as `write error: <reason>` (GNU reports
+  failures of large outputs as `error writing 'standard output'`)
+- `<reason>` texts come from the platform C library (they differ on Windows)
 
 ## Behavioural Contract
 
@@ -86,26 +120,42 @@ Note: single-dash `-v` means **verbose** (as in GNU `tail`); version is only
 | `tail-toto -n 3 file` | last 3 lines | `0` |
 | `tail-toto -n +3 file` | from line 3 to end | `0` |
 | `tail-toto -c 5 file` | last 5 bytes | `0` |
-| `tail-toto -n 0 file` | nothing | `0` |
+| `tail-toto -c 1K file` | last 1024 bytes | `0` |
+| `tail-toto -n 0 file` / `-c 0` | nothing; no FILE is opened, so no headers and no open errors | `0` |
+| `tail-toto -5 file` / `+5 file` | last 5 lines / from line 5 (obsolete syntax) | `0` |
+| `tail-toto -z -n 2 file` | last 2 NUL-terminated records | `0` |
 | `cmd \| tail-toto` | last 10 lines of stdin | `0` |
 | `tail-toto a b` | `==> a <==\n…\n\n==> b <==\n…` | `0` |
 | `tail-toto -q a b` | contents only, no headers | `0` |
 | `tail-toto -v a` | `==> a <==\n…` | `0` |
-| `tail-toto --version` / `--v` | prints `tail-toto <version>\n` | `0` |
+| `tail-toto --retry file` | stderr: `tail-toto: warning: --retry ignored; --retry is useful only when following`; last 10 lines | `0` |
+| `tail-toto --pid=1 file` | stderr: `tail-toto: warning: PID ignored; --pid=PID is useful only when following`; last 10 lines | `0` |
+| `tail-toto --version` / `--vers` | prints `tail-toto <version>\n` | `0` |
 | `tail-toto --help` / `--h` | prints usage on stdout | `0` |
 | `tail-toto missing` | stderr: `tail-toto: cannot open 'missing' for reading: <reason>` | `1` |
 | `tail-toto missing ok` | error for `missing`, `ok` still printed | `1` |
 | `tail-toto -n abc f` | stderr: `tail-toto: invalid number of lines: 'abc'` | `1` |
 | `tail-toto -c abc f` | stderr: `tail-toto: invalid number of bytes: 'abc'` | `1` |
+| `tail-toto -n 99999999999999999999 f` | stderr: `tail-toto: invalid number of lines: '99999999999999999999': Value too large for defined data type` | `1` |
+| `tail-toto -99999999999999999999` | stderr: `tail-toto: invalid number: '-99999999999999999999': Numerical result out of range` | `1` |
+| `tail-toto -n 2 -3` | stderr: `tail-toto: option used in invalid context -- 3` | `1` |
+| `tail-toto -s abc` | stderr: `tail-toto: invalid number of seconds: 'abc'` | `1` |
+| `tail-toto --pid=abc` | stderr: `tail-toto: invalid PID: 'abc'` | `1` |
+| `tail-toto --max-unchanged-stats=abc` | stderr: `tail-toto: invalid maximum number of unchanged stats between opens: 'abc'` | `1` |
 | `tail-toto -n` | stderr: `tail-toto: option requires an argument -- 'n'` + hint | `1` |
+| `tail-toto --lines` | stderr: `tail-toto: option '--lines' requires an argument` + hint | `1` |
 | `tail-toto -x` | stderr: `tail-toto: invalid option -- 'x'` + hint | `1` |
 | `tail-toto --foo` | stderr: `tail-toto: unrecognized option '--foo'` + hint | `1` |
+| `tail-toto --v` | stderr: `tail-toto: option '--v' is ambiguous; possibilities: '--verbose' '--version'` + hint | `1` |
+| `tail-toto --quiet=x` | stderr: `tail-toto: option '--quiet' doesn't allow an argument` + hint | `1` |
 | Read failure | stderr: `tail-toto: error reading '<name>': <reason>` | `1` |
 | Write failure | stderr: `tail-toto: write error: <reason>` (stops immediately) | `1` |
 
-`--help` anywhere in `argv` wins over `--version`. Stdin is named
-`standard input` in headers and diagnostics. A final line without a trailing
-newline still counts as a line and is printed as-is.
+Options are processed left to right: `--version --help` prints the version,
+`-x --help` reports the invalid option. Usage errors are detected before any
+input is read or output is written. Stdin is named `standard input` in headers
+and diagnostics. A final line without a trailing delimiter still counts as a
+line and is printed as-is.
 
 ## Exit Codes
 
@@ -118,8 +168,8 @@ newline still counts as a line and is printed as-is.
 
 ```
 build/     — tail-toto (+ .o); build/tests/test_core; .gitkeep markers
-include/   — tail_toto.h + tail_toto_{emit,cli,io,tail,run}.h
-src/       — main.c + tail_toto_{emit,cli,io,tail,run}.c
+include/   — tail_toto.h + tail_toto_{emit,cli,count,io,tail,run}.h
+src/       — main.c + tail_toto_{emit,cli,count,io,tail,run}.c
 tests/     — test_runner.c + test_*.c / .h → binary build/tests/test_core
 ```
 

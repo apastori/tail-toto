@@ -91,9 +91,9 @@ Typical outcomes:
 | `make clean` | removes objects/binaries under `build/` (keeps `.gitkeep`) |
 | `make install` | `install -m 755 build/tail-toto /usr/local/bin` (Linux/macOS) |
 
-**Main sources:** `src/main.c`, `src/tail_toto_emit.c`, `src/tail_toto_cli.c`, `src/tail_toto_io.c`, `src/tail_toto_tail.c`, `src/tail_toto_run.c`
+**Main sources:** `src/main.c`, `src/tail_toto_emit.c`, `src/tail_toto_cli.c`, `src/tail_toto_count.c`, `src/tail_toto_io.c`, `src/tail_toto_tail.c`, `src/tail_toto_run.c`
 
-**Test sources:** `tests/test_runner.c`, `tests/test_util.c`, `tests/test_count_parse.c`, `tests/test_lines_last.c`, `tests/test_lines_from.c`, `tests/test_bytes_last.c`, `tests/test_stream.c`
+**Test sources:** `tests/test_runner.c`, `tests/test_util.c`, `tests/test_count_parse.c`, `tests/test_parse_args.c`, `tests/test_lines_last.c`, `tests/test_lines_from.c`, `tests/test_bytes_last.c`, `tests/test_stream.c`, `tests/test_zero_terminated.c`
 
 ## Dependencies
 
@@ -117,6 +117,7 @@ tail-toto/
 │   ├── tail_toto.h
 │   ├── tail_toto_emit.h
 │   ├── tail_toto_cli.h
+│   ├── tail_toto_count.h
 │   ├── tail_toto_io.h
 │   ├── tail_toto_tail.h
 │   └── tail_toto_run.h
@@ -124,6 +125,7 @@ tail-toto/
 │   ├── main.c
 │   ├── tail_toto_emit.c
 │   ├── tail_toto_cli.c
+│   ├── tail_toto_count.c
 │   ├── tail_toto_io.c
 │   ├── tail_toto_tail.c
 │   └── tail_toto_run.c
@@ -131,10 +133,12 @@ tail-toto/
     ├── test_runner.c
     ├── test_util.c / .h
     ├── test_count_parse.c / .h
+    ├── test_parse_args.c / .h
     ├── test_lines_last.c / .h
     ├── test_lines_from.c / .h
     ├── test_bytes_last.c / .h
-    └── test_stream.c / .h
+    ├── test_stream.c / .h
+    └── test_zero_terminated.c / .h
 ```
 
 Build artefacts under `build/` (except `.gitkeep` files) are gitignored.
