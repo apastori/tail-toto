@@ -407,24 +407,34 @@ static enum tail_toto_status stream_bytes_last(int in_fd, int out_fd,
 
     for (;;) {
         r = tail_toto_read_retry(in_fd, tmp, sizeof tmp);
+        // if the read fails, set the status to an error and break out of the loop
         if (r < 0) {
             status = TAIL_TOTO_READ_ERR;
             break;
         }
+        // if the end of the input is reached, break out of the loop
         if (r == 0) {
             break;
         }
         got = (size_t)r;
 
+        // if the length of the buffer is greater than the capacity and the capacity is less than the limit
         if (len + got > cap && cap < limit) {
+            // if the capacity is not greater than 0, set the capacity to the current buffer temp */
             newcap = cap > 0 ? cap : sizeof tmp;
+            // while the new capacity is less than the length of the buffer plus the number of bytes read 
+            // and the new capacity is less than the limit
+            // double the capacity until it is greater than the limit
             while (newcap < len + got && newcap < limit) {
                 newcap = newcap > limit / 2 ? limit : newcap * 2;
             }
+            // if the new capacity is greater than the limit
+            // set the new capacity to the limit to avoid overflow
             if (newcap > limit) {
                 newcap = limit;
             }
             grown = realloc(ring, newcap);
+            // if the reallocation fails, set the status to an error and break out of the loop
             if (grown == NULL) {
                 errno = ENOMEM;
                 status = TAIL_TOTO_READ_ERR;
@@ -433,18 +443,25 @@ static enum tail_toto_status stream_bytes_last(int in_fd, int out_fd,
             ring = grown;
             cap = newcap;
         }
-
+        /* if the number of bytes read is greater than or equal to the capacity */
+        /* everything in the ring is older than the new data */
         if (got >= cap) {
             memcpy(ring, tmp + (got - cap), cap);
             start = 0;
             len = cap;
             continue;
         }
+        /* calculate the position of the next write */
         endpos = (start + len) % cap;
+        /* the number of bytes to copy from the temporary buffer to the ring */
         first = cap - endpos < got ? cap - endpos : got;
+        /* copy the new data to the tail of the ring */
         memcpy(ring + endpos, tmp, first);
+        /* copy the remaining data to the head of the ring */
         memcpy(ring, tmp + first, got - first);
         len += got;
+        /* if the length of the ring is greater than the capacity */
+        /* the ring is full, so wrap around to the beginning */
         if (len > cap) {
             start = (start + (len - cap)) % cap;
             len = cap;
@@ -476,24 +493,33 @@ static enum tail_toto_status lines_from(int in_fd, int out_fd, uintmax_t n)
 
     while (skip > 0) {
         r = tail_toto_read_retry(in_fd, buf, sizeof buf);
+        /* if the read fails, return an error */
         if (r < 0) {
             return TAIL_TOTO_READ_ERR;
         }
+        /* if the end of the input is reached, return OK */
         if (r == 0) {
             return TAIL_TOTO_OK;
         }
+        /* iterate through the buffer */
         for (i = 0; i < (size_t)r; i++) {
-            if (buf[i] == '\n' && --skip == 0) {
+            // if the character is not a newline, continue
+            if (buf[i] != '\n') {
+                continue;
+            }
+            /* if the character is a newline and the number of lines to skip is 0 */
+            skip--;
+            if (skip == 0) {
+                /* write the rest of the buffer to the output file */
                 i++;
-                if (i < (size_t)r
-                    && tail_toto_write_all(out_fd, buf + i,
-                                           (size_t)r - i) != 0) {
-                    return TAIL_TOTO_WRITE_ERR;
+                if (i < (size_t)r && tail_toto_write_all(out_fd, buf + i, (size_t)r - i) != 0) {
+                    return TAIL_TOTO_WRITE_ERR; /* return an error */
                 }
-                break;
+                break; /* break out of the loop */
             }
         }
     }
+    // copy after skipping the lines
     return copy_to_eof(in_fd, out_fd);
 }
 
@@ -571,6 +597,8 @@ enum tail_toto_status tail_toto_tail_fd(int in_fd, int out_fd,
             skip = n > 0 ? n - 1 : 0;
             /* check if the file is large enough to skip N - 1 lines */
             if ((uintmax_t)(end - start) <= skip) {
+                /* the file is not large enough to skip N - 1 lines, 
+                /* return OK nothing to print out*/
                 return TAIL_TOTO_OK;
             }
             /* seek to the offset after skipping N - 1 lines */
