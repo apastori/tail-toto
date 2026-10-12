@@ -225,7 +225,7 @@ static uintmax_t count_newlines(const char *p, size_t len)
  */
 static enum tail_toto_status emit_chunk_lines(int out_fd,
                                               struct line_chunk *head,
-                                              struct line_chunk *tail,
+                                              char last,
                                               uintmax_t total, uintmax_t n)
 {
     struct line_chunk *c = head;
@@ -233,28 +233,52 @@ static enum tail_toto_status emit_chunk_lines(int out_fd,
     uintmax_t skip;
     size_t off = 0;
 
-    if (tail->len > 0 && tail->data[tail->len - 1] != '\n') {
+    /* an unterminated final line still counts as a line */
+    if (last != '\n') {
         lines++;
     }
+    /* if the number of lines is greater than N, skip until the Nth line */
     if (lines > n) {
+        /* lines to skip */
         skip = lines - n;
+        /* cut linked list until the Nth line */
         while (c->nlines < skip) {
+            /* update the number of lines to skip */
             skip -= c->nlines;
+            /* delete first chunk head */
             c = c->next;
         }
+        /* find the first newline in the chunk */
         for (off = 0; off < c->len; off++) {
-            if (c->data[off] == '\n' && --skip == 0) {
+            /* if the character is not a newline, continue */
+            if (c->data[off] != '\n') {
+                continue;
+            }
+            /* update the number of lines to skip */
+            skip--;
+            /* if the number of lines to skip is 0, break out of the loop */
+            if (skip == 0) {
+                /* update the offset to the first character after the newline */
+                /* the target output offset */
                 off++;
                 break;
             }
         }
     }
 
-    for (; c != NULL; c = c->next, off = 0) {
-        if (c->len > off
-            && tail_toto_write_all(out_fd, c->data + off, c->len - off) != 0) {
-            return TAIL_TOTO_WRITE_ERR;
+    /* write the lines to the output file */
+    while (c != NULL) {
+        /* skip the chunk if the offset is greater than the length of the chunk */
+        if (c->len > off) {
+            /* write the chunk to the output file */
+            if (tail_toto_write_all(out_fd, c->data + off, c->len - off) != 0) {
+                return TAIL_TOTO_WRITE_ERR;
+            }
         }
+        /* update the chunk pointer to the next chunk */
+        c = c->next;
+        /* reset the offset to 0 */
+        off = 0;
     }
     return TAIL_TOTO_OK;
 }
@@ -277,6 +301,7 @@ static enum tail_toto_status stream_lines_last(int in_fd, int out_fd,
     uintmax_t added;
     ssize_t r;
     int saved;
+    char last = '\n';
 
     // initialize the head of the chunk linked list
     head = malloc(sizeof *head);
@@ -328,6 +353,7 @@ static enum tail_toto_status stream_lines_last(int in_fd, int out_fd,
         added = count_newlines(tail->data + tail->len, (size_t)r);
         /* update the length of the current chunk */
         tail->len += (size_t)r;
+        last = tail->data[tail->len - 1];
         /* update the number of newlines in the current chunk */
         tail->nlines += added;
         /* update the total number of newlines */
@@ -346,7 +372,7 @@ static enum tail_toto_status stream_lines_last(int in_fd, int out_fd,
         }
     }
 
-    status = emit_chunk_lines(out_fd, head, tail, total, n);
+    status = emit_chunk_lines(out_fd, head, last, total, n);
     /* save the error number before freeing the chunk linked list */
     saved = errno;
     /* free the chunk linked list and return the status */
